@@ -1,0 +1,151 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard | Radar Legislativo{% endblock %}
+{% block content %}
+<div class="container py-5">
+  <div class="project-toolbar mb-4">
+    <div>
+      <p class="eyebrow">PAINEL DE INDICADORES</p>
+      <h1>Como a Câmara votou em {{ selected_year }}</h1>
+      <p class="text-secondary mb-0">Indicadores calculados apenas sobre votações com voto individual publicado.</p>
+    </div>
+    <form class="filter-form">
+      <select name="year" class="form-select" onchange="this.form.submit()" aria-label="Ano">
+        {% for year in available_years %}<option value="{{ year }}" {% if year == selected_year %}selected{% endif %}>{{ year }}</option>{% endfor %}
+      </select>
+    </form>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg">
+      <div class="metric"><small>Votações nominais</small><strong>{{ total_votings }}</strong></div>
+    </div>
+    <div class="col-6 col-lg">
+      <div class="metric"><small>Aprovadas</small><strong>{{ approved_count }}</strong><small>{{ approval_rate }}% do total</small></div>
+    </div>
+    <div class="col-6 col-lg">
+      <div class="metric"><small>Não aprovadas</small><strong>{{ rejected_count }}</strong></div>
+    </div>
+    <div class="col-6 col-lg">
+      <div class="metric"><small>Projetos votados</small><strong>{{ projects_voted }}</strong></div>
+    </div>
+    <div class="col-6 col-lg">
+      <div class="metric"><small>Deputados com voto</small><strong>{{ deputies_voting }}</strong></div>
+    </div>
+    <div class="col-6 col-lg">
+      <div class="metric"><small>Média de votos por votação</small><strong>{{ average_participation }}</strong></div>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-8">
+      <div class="chart-card">
+        <h2>Votações nominais por mês</h2>
+        <canvas id="monthly" height="150"></canvas>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="chart-card">
+        <h2>Distribuição dos votos</h2>
+        <canvas id="votes" height="240"></canvas>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="chart-card">
+        <h2>Como cada partido votou (12 maiores bancadas)</h2>
+        <canvas id="parties" height="200"></canvas>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="chart-card">
+        <h2>Situação das matérias votadas</h2>
+        <canvas id="status" height="200"></canvas>
+      </div>
+    </div>
+    <div class="col-12">
+      <div class="chart-card">
+        <div class="d-flex justify-content-between align-items-end">
+          <h2>Votações mais recentes</h2>
+          <a href="{% url 'voting-list' %}?inicio={{ selected_year }}-01-01&amp;fim={{ selected_year }}-12-31">Ver todas</a>
+        </div>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead><tr><th>Data</th><th>Matéria</th><th>Resultado</th></tr></thead>
+            <tbody>
+              {% for voting in recent_votings %}
+                <tr>
+                  <td class="text-nowrap">{{ voting.voted_at|date:'d/m/Y' }}</td>
+                  <td><a href="{% url 'voting-detail' voting.pk %}">{{ voting.project.code|default:'Votação plenária' }} · {{ voting.project.title|truncatechars:90 }}</a></td>
+                  <td><span class="vote-chip {% if voting.result == 'Aprovado' %}vote-yes{% elif voting.result == 'Não aprovado' %}vote-no{% endif %}">{{ voting.result|default:'Não informado' }}</span></td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="3" class="text-secondary py-4">Nenhuma votação nominal registrada neste ano.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{{ monthly_data|json_script:"monthly-data" }}
+{{ vote_data|json_script:"vote-data" }}
+{{ party_labels|json_script:"party-labels" }}
+{{ party_series|json_script:"party-series" }}
+{{ status_data|json_script:"status-data" }}
+{% endblock %}
+{% block scripts %}
+<script>
+const read = id => JSON.parse(document.getElementById(id).textContent);
+const palette = {YES: '#4ade80', NO: '#fb7185', ABSTENTION: '#facc15', ABSENT: '#94a3b8'};
+Chart.defaults.color = '#91a4b8';
+Chart.defaults.borderColor = '#23354a';
+
+const monthly = read('monthly-data');
+new Chart(document.getElementById('monthly'), {
+  type: 'bar',
+  data: {
+    labels: monthly.map(row => row.label),
+    datasets: [{label: 'Votações', data: monthly.map(row => row.total), backgroundColor: '#38bdf8', borderRadius: 4}]
+  },
+  options: {plugins: {legend: {display: false}}, scales: {y: {beginAtZero: true, ticks: {precision: 0}}}}
+});
+
+const voteData = read('vote-data');
+new Chart(document.getElementById('votes'), {
+  type: 'doughnut',
+  data: {
+    labels: voteData.map(row => row.label),
+    datasets: [{data: voteData.map(row => row.total), backgroundColor: ['#4ade80', '#fb7185', '#facc15', '#94a3b8']}]
+  },
+  options: {plugins: {legend: {position: 'bottom'}}}
+});
+
+const partyLabels = read('party-labels');
+const partySeries = read('party-series');
+new Chart(document.getElementById('parties'), {
+  type: 'bar',
+  data: {
+    labels: partyLabels,
+    datasets: partySeries.map(serie => ({
+      label: serie.label,
+      data: serie.values,
+      backgroundColor: palette[serie.choice] || '#64748b'
+    }))
+  },
+  options: {
+    plugins: {legend: {position: 'bottom'}},
+    scales: {x: {stacked: true}, y: {stacked: true, beginAtZero: true}}
+  }
+});
+
+const statusData = read('status-data');
+new Chart(document.getElementById('status'), {
+  type: 'bar',
+  data: {
+    labels: statusData.map(row => row.label),
+    datasets: [{data: statusData.map(row => row.total), backgroundColor: '#7dd3fc', borderRadius: 4}]
+  },
+  options: {indexAxis: 'y', plugins: {legend: {display: false}}, scales: {x: {beginAtZero: true, ticks: {precision: 0}}}}
+});
+</script>
+{% endblock %}

@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+{% block title %}{{ parliamentarian.name }} | Radar Legislativo{% endblock %}
+{% block content %}
+<div class="container py-5">
+  <a class="text-secondary" href="{% url 'parliamentarian-list' %}">← Parlamentares</a>
+  <div class="profile-head mt-4">
+    {% if parliamentarian.photo_url %}
+      <img src="{{ parliamentarian.photo_url }}" alt="Foto de {{ parliamentarian.name }}">
+    {% else %}
+      <div class="avatar">{{ parliamentarian.name|first }}</div>
+    {% endif %}
+    <div>
+      <p class="eyebrow">DEPUTADO FEDERAL</p>
+      <h1>{{ parliamentarian.name }}</h1>
+      <p class="text-secondary">{{ parliamentarian.role|default:'Deputado federal' }} · {{ parliamentarian.party.acronym|default:'Partido não informado' }} · {{ parliamentarian.state|default:'-' }}</p>
+    </div>
+  </div>
+
+  <div class="row g-4 mt-2">
+    <div class="col-lg-8">
+      <div class="chart-card">
+        <h2>Projetos apresentados em {{ presented_year }}</h2>
+        <div class="kind-filters">
+          {% for kind in kind_filters %}
+            <a class="kind-chip{% if selected_kind == kind.key %} is-active{% endif %}" href="?page={{ history_page.number }}&tipo={{ kind.key }}">{{ kind.label }}</a>
+          {% endfor %}
+        </div>
+        {% if presented_error %}<div class="alert alert-warning">Não foi possível consultar a Câmara agora: {{ presented_error }}</div>{% endif %}
+        <div class="list-group legislative-list">
+          {% for project in presented_projects %}
+            <a href="{% url 'project-detail' project.pk %}" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between gap-3">
+                <strong>{{ project.code }} · {{ project.title|truncatechars:130 }}</strong>
+                <span class="text-nowrap">{{ project.presented_at|date:'d/m/Y'|default:'-' }}</span>
+              </div>
+            </a>
+          {% empty %}
+            <div class="empty-state">Nenhuma proposição deste tipo foi encontrada para este parlamentar em {{ presented_year }}.</div>
+          {% endfor %}
+        </div>
+        {% if presented_projects or presented_pages > 1 %}
+          <nav class="mt-3 d-flex justify-content-between align-items-center">
+            {% if presented_page > 1 %}
+              <a class="btn btn-sm btn-outline-secondary" href="?{{ presented_query }}&apresentados={{ presented_page|add:'-1' }}">← Anterior</a>
+            {% else %}<span></span>{% endif %}
+            <span class="text-secondary small">7 por página · página {{ presented_page }} de {{ presented_pages }}</span>
+            {% if presented_page < presented_pages %}
+              <a class="btn btn-sm btn-outline-secondary" href="?{{ presented_query }}&apresentados={{ presented_page|add:'1' }}">Próxima →</a>
+            {% else %}<span></span>{% endif %}
+          </nav>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="chart-card">
+        <h2>Votos registrados</h2>
+        <canvas id="votes"></canvas>
+        <small class="text-secondary">{{ vote_total }} registros, sem avaliação de mérito.</small>
+        <hr>
+        <p class="mb-0">Despesas registradas</p>
+        <strong>R$ {{ expenses_total|floatformat:2 }}</strong>
+      </div>
+
+      <div class="chart-card mt-4">
+        <h2>Como votou desde 2023</h2>
+        <div class="vote-log">
+          {% for vote in vote_history %}
+            <a href="{% url 'voting-detail' vote.voting.pk %}">
+              <span>{{ vote.voting.voted_at|date:'d/m/Y' }}</span>
+              <span class="vote-chip vote-{{ vote.choice|lower }}">{{ vote.get_choice_display }}</span>
+            </a>
+          {% empty %}
+            <p class="text-secondary mb-0">Não há votos nominais publicados para este parlamentar no período.</p>
+          {% endfor %}
+        </div>
+        {% if history_page.has_other_pages %}
+          <nav class="mt-3 d-flex justify-content-between align-items-center gap-2">
+            {% if history_page.has_previous %}
+              <a class="btn btn-sm btn-outline-secondary" href="?{{ history_query }}&page={{ history_page.previous_page_number }}">←</a>
+            {% else %}<span></span>{% endif %}
+            <span class="text-secondary small">{{ history_page.number }} de {{ history_page.paginator.num_pages }}</span>
+            {% if history_page.has_next %}
+              <a class="btn btn-sm btn-outline-secondary" href="?{{ history_query }}&page={{ history_page.next_page_number }}">→</a>
+            {% else %}<span></span>{% endif %}
+          </nav>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{{ votes|json_script:"parliamentarian-votes" }}
+{% endblock %}
+{% block scripts %}
+<script>
+const data = JSON.parse(document.getElementById('parliamentarian-votes').textContent);
+new Chart(document.getElementById('votes'), {
+  type: 'doughnut',
+  data: {
+    labels: data.map(item => item.label),
+    datasets: [{data: data.map(item => item.total), backgroundColor: ['#4ade80','#fb7185','#facc15','#94a3b8']}]
+  }
+});
+</script>
+{% endblock %}

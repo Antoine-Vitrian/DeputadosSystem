@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block title %}Parlamentares | Radar Legislativo{% endblock %}
+{% block content %}
+<div class="container py-5">
+  <div class="project-toolbar mb-4">
+    <div>
+      <p class="eyebrow">DEPUTADOS FEDERAIS</p>
+      <h1>Parlamentares</h1>
+      <p class="text-secondary mb-0">Lista oficial carregada em páginas para manter a consulta rápida.</p>
+    </div>
+    <form class="filter-form">
+      <div class="search-row">
+        <input name="q" value="{{ request.GET.q }}" class="form-control" placeholder="Buscar nome">
+        <button class="btn btn-outline-info">Filtrar</button>
+      </div>
+    </form>
+  </div>
+
+  {% if sync_error %}<div class="alert alert-warning">Exibindo dados salvos: {{ sync_error }}</div>{% endif %}
+
+  <div class="table-responsive">
+    <table class="table align-middle people-table">
+      <thead><tr><th colspan="2">Nome</th><th>Partido</th><th>Estado</th><th>Mandato</th></tr></thead>
+      <tbody>
+        {% for item in parliamentarians %}
+          <tr class="row-link" data-href="{% url 'parliamentarian-detail' item.pk %}">
+            <td class="photo-cell">
+              {% if item.photo_url %}
+                <img class="row-avatar" src="{{ item.photo_url }}" alt="Foto de {{ item.name }}" loading="lazy">
+              {% else %}
+                <span class="row-avatar row-avatar-empty">{{ item.name|first }}</span>
+              {% endif %}
+            </td>
+            <td><a class="link-light fw-semibold" href="{% url 'parliamentarian-detail' item.pk %}">{{ item.name }}</a></td>
+            <td>{{ item.party.acronym|default:'-' }}</td>
+            <td>{{ item.state|default:'-' }}</td>
+            <td>Federal</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-secondary py-5 text-center">Nenhum deputado encontrado.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if page_obj.has_other_pages %}
+    <nav class="d-flex justify-content-between align-items-center">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-outline-secondary" href="?q={{ request.GET.q }}&page={{ page_obj.previous_page_number }}">← Anterior</a>
+      {% else %}<span></span>{% endif %}
+      <span class="text-secondary">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="btn btn-outline-secondary" href="?q={{ request.GET.q }}&page={{ page_obj.next_page_number }}">Próxima →</a>
+      {% else %}<span></span>{% endif %}
+    </nav>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('.row-link').forEach(row => {
+  row.addEventListener('click', event => {
+    if (event.target.closest('a')) return;
+    window.location.assign(row.dataset.href);
+  });
+});
+</script>
+{% endblock %}

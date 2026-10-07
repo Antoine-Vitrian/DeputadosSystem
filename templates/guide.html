@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block title %}Entenda | Radar Legislativo{% endblock %}
+{% block content %}
+<div class="container py-5">
+  <p class="eyebrow">GUIA CIDADÃO</p>
+  <h1>Como a Câmara funciona, em linguagem comum</h1>
+  <p class="lead text-secondary col-lg-9 px-0">Duas coisas confundem todo mundo: as siglas dos projetos e as regras que colocam um deputado na cadeira. Esta página explica as duas, sem juridiquês.</p>
+
+  <div class="kind-filters mb-5">
+    <a class="kind-chip" href="#eleicao">Como se elege um deputado</a>
+    <a class="kind-chip" href="#proposicoes">PL, PEC e os outros tipos</a>
+  </div>
+
+  <section id="eleicao" class="mb-5">
+    <p class="eyebrow">ELEIÇÃO</p>
+    <h2 class="mb-4">Como alguém vira deputado federal</h2>
+    <div class="row g-4">
+      {% for item in election %}
+        <div class="col-12">
+          <article class="plain-explanation">
+            <small>Regra {{ forloop.counter }}</small>
+            <h2>{{ item.title }}</h2>
+            <p class="mb-0">{{ item.body }}</p>
+          </article>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="proposicoes">
+    <p class="eyebrow">NO CONGRESSO</p>
+    <h2 class="mb-3">O que cada tipo de proposição significa</h2>
+    <p class="text-secondary col-lg-8 px-0">Na ficha do deputado os filtros usam estas siglas. O tipo diz o <em>poder</em> do papel; o clique no item abre o resumo daquele texto.</p>
+    <div class="kind-filters mb-4">
+      {% for item in items %}
+        <a class="kind-chip" href="#{{ item.anchor }}">{{ item.chip }}</a>
+      {% endfor %}
+    </div>
+    <div class="row g-4">
+      {% for item in items %}
+        <div class="col-12" id="{{ item.anchor }}">
+          <article class="plain-explanation">
+            <small>{{ item.chip }}</small>
+            <h2>{{ item.title }}</h2>
+            <p class="guide-plain">{{ item.plain }}</p>
+            <p class="mb-0">{{ item.body }}</p>
+          </article>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <p class="text-secondary small mt-5 mb-0">Texto informativo do Radar Legislativo, com base na Constituição, no Código Eleitoral e nas leis 9.504/1997 e 13.165/2015. Não substitui o TSE nem a Câmara.</p>
+</div>
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block title %}Votações | Radar Legislativo{% endblock %}
+{% block content %}
+<div class="container py-5">
+  <div class="project-toolbar mb-4">
+    <div>
+      <p class="eyebrow">CÂMARA DOS DEPUTADOS</p>
+      {% if searching %}
+        <h1>Votações nominais{% if start_date and end_date %} de {{ start_date|date:'d/m/Y' }} a {{ end_date|date:'d/m/Y' }}{% endif %}</h1>
+        <p class="text-secondary mb-0">Busca no acervo da Câmara a partir de 2023, 10 por página.</p>
+      {% else %}
+        <h1>Últimas 10 votações nominais</h1>
+        <p class="text-secondary mb-0">Para ver um período maior, busque um intervalo a partir de 2023.</p>
+      {% endif %}
+    </div>
+    <form class="filter-form">
+      <input name="q" value="{{ query }}" class="form-control" placeholder="Código, assunto ou tema">
+      <div class="date-range">
+        <label>De<input name="inicio" value="{{ start_date|date:'Y-m-d' }}" type="date" min="2023-01-01" class="form-control"></label>
+        <label>Até<input name="fim" value="{{ end_date|date:'Y-m-d' }}" type="date" min="2023-01-01" class="form-control"></label>
+        <button class="btn btn-outline-info">Buscar</button>
+      </div>
+    </form>
+  </div>
+
+  {% if sync_error %}<div class="alert alert-warning">Não foi possível consultar a Câmara agora: {{ sync_error }}</div>{% endif %}
+  {% if searching %}
+    <p class="text-secondary">{{ page_obj.paginator.count }} votações encontradas.</p>
+  {% endif %}
+
+  <div class="list-group legislative-list">
+    {% for voting in votings %}
+      <a href="{% url 'voting-detail' voting.pk %}" class="list-group-item list-group-item-action">
+        <div class="d-flex justify-content-between gap-3">
+          <strong>
+            {% if voting.project %}{{ voting.project.code }} · {{ voting.project.title|truncatechars:130 }}
+            {% else %}{{ voting.title|truncatechars:160 }}{% endif %}
+          </strong>
+          <span class="text-nowrap">{{ voting.voted_at|date:'d/m/Y H:i' }}</span>
+        </div>
+      </a>
+    {% empty %}
+      <div class="empty-state">Nenhuma votação nominal encontrada para esses filtros.</div>
+    {% endfor %}
+  </div>
+
+  {% if page_obj and page_obj.has_other_pages %}
+    <nav class="mt-4 d-flex justify-content-between align-items-center">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-outline-secondary" href="?{{ filter_query }}&page={{ page_obj.previous_page_number }}">← Anterior</a>
+      {% else %}<span></span>{% endif %}
+      <span class="text-secondary">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="btn btn-outline-secondary" href="?{{ filter_query }}&page={{ page_obj.next_page_number }}">Próxima →</a>
+      {% else %}<span></span>{% endif %}
+    </nav>
+  {% endif %}
+</div>
+{% endblock %}

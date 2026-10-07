@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+{% block title %}Radar Legislativo | Política de ontem{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="container py-5">
+    <div class="row align-items-center g-5">
+      <div class="col-lg-8">
+        <p class="eyebrow">RESUMO DIÁRIO · {{ reference_date|date:'d/m/Y' }}</p>
+        <h1>A política de ontem, sem ruído.</h1>
+        <p class="lead text-secondary">Notícias de política e atividade legislativa recente da Câmara.</p>
+      </div>
+      <div class="col-lg-4">
+        <div class="signal-panel">
+          <span class="signal-dot"></span>
+          <span>Notícias atualizadas a cada hora</span>
+          <strong>{{ articles|length }} notícias recentes</strong>
+          <small>Conteúdo do Poder360. Dados legislativos vêm da Câmara.</small>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="container py-5">
+  {% if sync_error %}<div class="alert alert-warning">{{ sync_error }}. Exibindo os últimos dados salvos.</div>{% endif %}
+  <section class="daily-brief mb-5">
+    <p class="eyebrow">PANORAMA DO DIA ANTERIOR</p>
+    <h2>Resumo político</h2>
+    {% if brief %}
+      <div class="brief-copy">{{ brief.summary|linebreaks }}</div>
+      <small class="text-secondary">Síntese automática baseada nas manchetes coletadas; consulte as fontes para o contexto completo.</small>
+    {% else %}
+      <div class="empty-state">O resumo ainda não pôde ser criado.</div>
+    {% endif %}
+  </section>
+
+  <section class="mb-5">
+    <div class="d-flex justify-content-between align-items-end mb-3">
+      <div><p class="eyebrow">PODER360</p><h2>Notícias mais recentes</h2></div>
+      <span class="text-secondary small">{{ articles|length }} exibidas</span>
+    </div>
+    <div class="row g-3">
+      {% for article in articles %}
+        <div class="col-md-6">
+          <article class="news-card h-100">
+            <div class="d-flex justify-content-between gap-3">
+              <span class="badge badge-level">{{ article.get_category_display }}</span>
+              <small class="text-secondary">{{ article.published_at|date:'d/m H:i' }}</small>
+            </div>
+            <h3><a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">{{ article.title }}</a></h3>
+            <p>{{ article.summary }}</p>
+            <small class="text-secondary">{{ article.source.name|default:'Fonte na web' }} ↗</small>
+          </article>
+        </div>
+      {% empty %}
+        <div class="col-12"><div class="empty-state">O feed do Poder360 está temporariamente sem notícias.</div></div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <div class="d-flex justify-content-between align-items-end mb-3">
+      <div><p class="eyebrow">CÂMARA DOS DEPUTADOS</p><h2>Votações recentes com voto nominal</h2></div>
+      <a href="{% url 'voting-list' %}">Ver votações</a>
+    </div>
+    <div class="row g-3">
+      {% for project in projects %}
+        <div class="col-md-6 col-lg-4">
+          <article class="data-card h-100">
+            <span class="badge badge-level">{{ project.code }}</span>
+            <h3><a href="{% url 'project-detail' project.pk %}">{{ project.title|truncatechars:110 }}</a></h3>
+            <small class="text-secondary">{{ project.author.name|default:'Autoria carregada ao abrir' }}</small>
+          </article>
+        </div>
+      {% empty %}
+        <div class="col-12"><div class="empty-state">Aguardando a primeira sincronização oficial.</div></div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>window.setTimeout(() => window.location.reload(), 60 * 60 * 1000);</script>
+{% endblock %}
