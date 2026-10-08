@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <defs>
+    <linearGradient id="logoBlueGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1E40AF" />
+      <stop offset="50%" stop-color="#3B82F6" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+    <filter id="glow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#38BDF8" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)">
+    <path d="M 130 140 A 170 170 0 0 1 370 140" fill="none" stroke="url(#logoBlueGrad)" stroke-width="24" stroke-linecap="round" />
+    <path d="M 175 190 A 115 115 0 0 1 325 190" fill="none" stroke="url(#logoBlueGrad)" stroke-width="20" stroke-linecap="round" />
+    <path d="M 90 260 C 90 360, 210 420, 310 400 C 270 340, 240 290, 230 260 Z" fill="none" stroke="url(#logoBlueGrad)" stroke-width="22" stroke-linejoin="round" stroke-linecap="round" />
+    <path d="M 170 395 L 140 450 L 230 450 Z" fill="none" stroke="url(#logoBlueGrad)" stroke-width="20" stroke-linejoin="round" stroke-linecap="round" />
+    <rect x="235" y="310" width="28" height="75" rx="6" fill="url(#logoBlueGrad)" />
+    <rect x="280" y="260" width="28" height="125" rx="6" fill="url(#logoBlueGrad)" />
+    <rect x="325" y="190" width="28" height="195" rx="6" fill="url(#logoBlueGrad)" />
+    <path d="M 215 340 L 260 300 L 305 240 L 375 155" fill="none" stroke="url(#logoBlueGrad)" stroke-width="14" stroke-linecap="round" />
+    <polygon points="375,135 385,175 350,165" fill="url(#logoBlueGrad)" />
+    <circle cx="215" cy="340" r="14" fill="url(#logoBlueGrad)" />
+  </g>
+</svg>

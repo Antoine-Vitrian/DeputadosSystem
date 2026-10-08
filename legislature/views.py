@@ -14,7 +14,7 @@ from services.teor import ensure_text_summary
 from services.news import news_refresh_due, sync_daily_news
 from services.ranking import fetch_parliamentarian_score
 
-from .models import DailyBrief, LegislativeLevel, NewsArticle, Parliamentarian, Project, Theme, Vote, Voting
+from .models import LegislativeLevel, NewsArticle, Parliamentarian, Project, Theme, Vote, Voting
 
 
 def _ensure_recent_data():
@@ -36,14 +36,12 @@ def home(request):
             sync_daily_news(reference_date)
         except (requests.RequestException, ValueError) as error:
             sync_error = sync_error or f"Notícias temporariamente indisponíveis: {error}"
-    brief = DailyBrief.objects.filter(reference_date=reference_date).first()
     articles = NewsArticle.objects.filter(
         category=NewsArticle.Category.POLITICS,
         source__identifier="poder360-rss",
     ).select_related("source")[:12]
     context = {
         "reference_date": reference_date,
-        "brief": brief,
         "articles": articles,
         "sync_error": sync_error,
         "projects": Project.objects.filter(votings__votes__isnull=False).annotate(latest_vote=Max("votings__voted_at")).select_related("author").order_by("-latest_vote")[:6],

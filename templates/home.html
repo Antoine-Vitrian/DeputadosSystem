@@ -1,12 +1,12 @@
 {% extends 'base.html' %}
-{% block title %}Radar Legislativo | Política de ontem{% endblock %}
+{% block title %}Radar Legislativo | Notícias e votações{% endblock %}
 {% block content %}
 <section class="hero">
   <div class="container py-5">
     <div class="row align-items-center g-5">
       <div class="col-lg-8">
-        <p class="eyebrow">RESUMO DIÁRIO · {{ reference_date|date:'d/m/Y' }}</p>
-        <h1>A política de ontem, sem ruído.</h1>
+        <p class="eyebrow">NOTÍCIAS E ATIVIDADE LEGISLATIVA</p>
+        <h1>Acompanhe a política sem ruído.</h1>
         <p class="lead text-secondary">Notícias de política e atividade legislativa recente da Câmara.</p>
       </div>
       <div class="col-lg-4">
@@ -23,17 +23,6 @@
 
 <div class="container py-5">
   {% if sync_error %}<div class="alert alert-warning">{{ sync_error }}. Exibindo os últimos dados salvos.</div>{% endif %}
-  <section class="daily-brief mb-5">
-    <p class="eyebrow">PANORAMA DO DIA ANTERIOR</p>
-    <h2>Resumo político</h2>
-    {% if brief %}
-      <div class="brief-copy">{{ brief.summary|linebreaks }}</div>
-      <small class="text-secondary">Síntese automática baseada nas manchetes coletadas; consulte as fontes para o contexto completo.</small>
-    {% else %}
-      <div class="empty-state">O resumo ainda não pôde ser criado.</div>
-    {% endif %}
-  </section>
-
   <section class="mb-5">
     <div class="d-flex justify-content-between align-items-end mb-3">
       <div><p class="eyebrow">PODER360</p><h2>Notícias mais recentes</h2></div>

@@ -70,7 +70,7 @@ A nota acumulada exibida no perfil do parlamentar vem do Ranking dos Políticos:
 - `/projetos/<id>/` resumo de uma proposição
 - `/pesquisa/` busca global
 - `/entenda/` regras da eleição e o que é PL, PEC, emenda e os outros tipos
-- `/entrar/` tela de login
+- `/entrar/` aviso de login temporariamente indisponível
 - `/api/v1/` API para clientes web e mobile
 - `/admin/` administração Django
 

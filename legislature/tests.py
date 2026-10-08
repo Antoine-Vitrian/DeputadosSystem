@@ -97,6 +97,15 @@ class PublicPagesTests(TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 200)
 
+    def test_home_shows_news_without_previous_day_summary(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Notícias mais recentes")
+        self.assertContains(response, "Notícia política de teste")
+        self.assertNotContains(response, "PANORAMA DO DIA ANTERIOR")
+        self.assertNotContains(response, "Resumo de teste.")
+
     def test_lazy_detail_pages_render_saved_data(self):
         self.assertEqual(self.client.get(f"/projetos/{self.project.pk}/").status_code, 200)
         response = self.client.get(f"/votacoes/{self.voting.pk}/")
@@ -589,16 +598,18 @@ class PublicPagesTests(TestCase):
         self.assertContains(response, "Fontes oficiais")
         self.assertContains(response, "Câmara dos Deputados")
         self.assertContains(response, "Poder360")
-        self.assertContains(response, "Entrar")
+        self.assertContains(response, "Login temporariamente indisponível")
+        self.assertContains(response, "disabled")
+        self.assertContains(response, "logo_radar_administrativo.svg", count=2)
+        self.assertContains(response, 'alt="Radar Administrativo — Análise e Transparência Parlamentar"')
+        self.assertContains(response, 'rel="icon" type="image/svg+xml"')
+        self.assertContains(response, "favicon.svg")
 
-    def test_login_page_authenticates_user(self):
+    def test_login_is_temporarily_disabled(self):
         User.objects.create_user(username="analista", password="senha-segura")
         response = self.client.get("/entrar/")
-        self.assertContains(response, "Entrar no Radar Legislativo")
-        self.assertContains(response, "Usuário")
-        self.assertContains(response, "Senha")
+        self.assertContains(response, "Login temporariamente indisponível")
+        self.assertNotContains(response, 'name="username"')
         response = self.client.post("/entrar/", {"username": "analista", "password": "errada"}, follow=True)
-        self.assertContains(response, "Usuário")
+        self.assertEqual(response.status_code, 405)
         self.assertFalse(response.wsgi_request.user.is_authenticated)
-        response = self.client.post("/entrar/", {"username": "analista", "password": "senha-segura"})
-        self.assertRedirects(response, "/")
