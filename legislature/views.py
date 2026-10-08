@@ -9,16 +9,17 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from services.camara import PROPOSITION_KINDS, ensure_voting_projects, fetch_author_propositions, hydrate_project, hydrate_voting, import_nominal_votings_range, source, sync_recent_legislative_data
+from services.camara import PROPOSITION_KINDS, ensure_voting_projects, fetch_author_propositions, hydrate_project, hydrate_voting, import_nominal_votings_range, refresh_parliamentarian_identity, source, sync_deputies_for_year, sync_recent_legislative_data
 from services.teor import ensure_text_summary
 from services.news import news_refresh_due, sync_daily_news
+from services.ranking import fetch_parliamentarian_score
 
 from .models import DailyBrief, LegislativeLevel, NewsArticle, Parliamentarian, Project, Theme, Vote, Voting
 
 
 def _ensure_recent_data():
     data_source = source()
-    stale = not data_source.last_synced_at or data_source.last_synced_at < timezone.now() - timedelta(hours=12)
+    stale = not data_source.last_synced_at or data_source.last_synced_at < timezone.now() - timedelta(hours=1)
     if stale:
         sync_recent_legislative_data()
 
@@ -159,35 +160,102 @@ def parliamentarian_list(request):
         _ensure_recent_data()
     except requests.RequestException as error:
         sync_error = str(error)
+    try:
+        selected_year = int(request.GET.get("ano") or 0)
+    except ValueError:
+        selected_year = 0
+    current_year = timezone.localdate().year
+    if selected_year < 2010 or selected_year > current_year:
+        selected_year = 0
     queryset = (
-        Parliamentarian.objects.filter(level=LegislativeLevel.FEDERAL, is_mock=False, is_active=True)
+        Parliamentarian.objects.filter(level=LegislativeLevel.FEDERAL, is_mock=False)
         .exclude(name="")
         .exclude(name__isnull=True)
         .select_related("party")
         .distinct()
     )
-    if request.GET.get("q"):
-        queryset = queryset.filter(Q(name__icontains=request.GET["q"]) | Q(civil_name__icontains=request.GET["q"]))
+    if selected_year:
+        period_start = date(selected_year, 1, 1)
+        period_end = date(selected_year, 12, 31)
+        if not queryset.filter(
+            mandates__start_date__lte=period_end,
+        ).filter(
+            Q(mandates__end_date__isnull=True) | Q(mandates__end_date__gte=period_start)
+        ).exists():
+            try:
+                sync_deputies_for_year(selected_year)
+            except requests.RequestException as error:
+                sync_error = sync_error or str(error)
+        queryset = queryset.filter(
+            mandates__start_date__lte=period_end,
+        ).filter(
+            Q(mandates__end_date__isnull=True) | Q(mandates__end_date__gte=period_start)
+        )
+    else:
+        queryset = queryset.filter(is_active=True)
+    selected_name = request.GET.get("q", "").strip()
+    selected_party = request.GET.get("partido", "").strip()
+    selected_state = request.GET.get("estado", "").strip().upper()
+    if selected_name:
+        queryset = queryset.filter(Q(name__icontains=selected_name) | Q(civil_name__icontains=selected_name))
+    if selected_party.isdigit():
+        queryset = queryset.filter(party_id=int(selected_party))
+    if selected_state:
+        queryset = queryset.filter(state=selected_state)
     page_obj = Paginator(queryset, 25).get_page(request.GET.get("page"))
-    return render(request, "parliamentarian_list.html", {"page_obj": page_obj, "parliamentarians": page_obj.object_list, "sync_error": sync_error})
-
-
-PRESENTED_YEAR = 2026
+    filter_params = request.GET.copy()
+    filter_params.pop("page", None)
+    return render(request, "parliamentarian_list.html", {
+        "page_obj": page_obj,
+        "parliamentarians": page_obj.object_list,
+        "sync_error": sync_error,
+        "selected_year": selected_year,
+        "available_years": range(current_year, 2009, -1),
+        "selected_name": selected_name,
+        "selected_party": selected_party,
+        "selected_state": selected_state,
+        "party_options": Parliamentarian.objects.filter(
+            level=LegislativeLevel.FEDERAL,
+            is_mock=False,
+            party__isnull=False,
+        ).values("party_id", "party__acronym", "party__name").distinct().order_by("party__acronym", "party__name"),
+        "state_options": Parliamentarian.objects.filter(
+            level=LegislativeLevel.FEDERAL,
+            is_mock=False,
+        ).exclude(state="").values_list("state", flat=True).distinct().order_by("state"),
+        "filter_query": filter_params.urlencode(),
+    })
 
 
 def parliamentarian_detail(request, pk):
     parliamentarian = get_object_or_404(Parliamentarian.objects.select_related("party"), pk=pk)
-    votes = list(parliamentarian.votes.values("choice").annotate(total=Count("id")))
-    choice_labels = dict(Vote.Choice.choices)
-    for row in votes:
-        row["label"] = choice_labels.get(row["choice"], row["choice"])
-    vote_history = parliamentarian.votes.filter(voting__voted_at__date__gte=date(2023, 1, 1)).select_related("voting", "voting__project").order_by("-voting__voted_at")
+    identity_error = ""
+    try:
+        parliamentarian = refresh_parliamentarian_identity(parliamentarian)
+    except requests.RequestException as error:
+        identity_error = str(error)
+    parliamentarian = Parliamentarian.objects.select_related("party").get(pk=parliamentarian.pk)
+    vote_history = parliamentarian.votes.filter(voting__voted_at__date__gte=EARLIEST_VOTING_DATE).select_related("voting", "voting__project").order_by("-voting__voted_at")
     history_page = Paginator(vote_history, 5).get_page(request.GET.get("page"))
-    expenses = parliamentarian.expenses.aggregate(total=__import__("django.db.models", fromlist=["Sum"]).Sum("value"))["total"] or 0
     try:
         presented_page = max(int(request.GET.get("apresentados") or 1), 1)
     except ValueError:
         presented_page = 1
+    current_year = timezone.localdate().year
+    try:
+        presented_year = int(request.GET.get("ano") or 0) or None
+    except ValueError:
+        presented_year = None
+    if presented_year is not None and not 2010 <= presented_year <= current_year:
+        presented_year = None
+    try:
+        presented_month = int(request.GET.get("mes") or 0) or None
+    except ValueError:
+        presented_month = None
+    if presented_month is not None and not 1 <= presented_month <= 12:
+        presented_month = None
+    if presented_year is None:
+        presented_month = None
     selected_kind = request.GET.get("tipo", "").strip().upper()
     if selected_kind not in PROPOSITION_KINDS:
         selected_kind = ""
@@ -196,27 +264,79 @@ def parliamentarian_detail(request, pk):
     presented_error = ""
     try:
         presented_projects, presented_pages = fetch_author_propositions(
-            parliamentarian, PRESENTED_YEAR, presented_page, per_page=7, kind=selected_kind
+            parliamentarian,
+            presented_year,
+            presented_page,
+            per_page=7,
+            kind=selected_kind,
+            month=presented_month,
         )
     except requests.RequestException as error:
         presented_error = str(error)
+    ranking_score = None
+    ranking_error = ""
+    try:
+        ranking_score = fetch_parliamentarian_score(parliamentarian)
+    except (requests.RequestException, ValueError) as error:
+        ranking_error = str(error)
+    ranking_rating = None
+    if ranking_score:
+        score_value = ranking_score["score"]
+        if score_value >= 7:
+            ranking_rating = {"class": "good", "label": "Boa"}
+        elif score_value >= 5:
+            ranking_rating = {"class": "medium", "label": "Mediana"}
+        else:
+            ranking_rating = {"class": "low", "label": "Baixa"}
+    party_display = (
+        parliamentarian.party.acronym or parliamentarian.party.name
+        if parliamentarian.party_id
+        else ""
+    ) or (ranking_score.get("party", "") if ranking_score else "") or "Não informado"
+    state_display = parliamentarian.state or (
+        ranking_score.get("state", "") if ranking_score else ""
+    ) or "Não informado"
     presented_pages = max(int(presented_pages or 1), 1)
     return render(request, "parliamentarian_detail.html", {
         "parliamentarian": parliamentarian,
-        "votes": votes,
+        "party_display": party_display,
+        "state_display": state_display,
+        "identity_error": identity_error,
         "history_page": history_page,
         "vote_history": history_page.object_list,
-        "vote_total": sum(row["total"] for row in votes),
-        "expenses_total": expenses,
-        "presented_year": PRESENTED_YEAR,
+        "vote_total": parliamentarian.votes.count(),
+        "presented_year": presented_year,
+        "presented_month": presented_month,
+        "available_years": range(current_year, 2009, -1),
+        "month_choices": [
+            (month, label)
+            for month, label in enumerate(
+                ("Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                 "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"),
+                start=1,
+            )
+        ],
         "presented_projects": presented_projects,
         "presented_page": presented_page,
         "presented_pages": presented_pages,
         "presented_error": presented_error,
+        "ranking_score": ranking_score,
+        "ranking_rating": ranking_rating,
+        "ranking_error": ranking_error,
         "kind_filters": [{"key": key, "label": value["label"]} for key, value in PROPOSITION_KINDS.items()],
         "selected_kind": selected_kind,
-        "history_query": urlencode({"apresentados": presented_page, "tipo": selected_kind}),
-        "presented_query": urlencode({"page": history_page.number, "tipo": selected_kind}),
+        "history_query": urlencode({
+            "apresentados": presented_page,
+            "tipo": selected_kind,
+            "ano": presented_year or "",
+            "mes": presented_month or "",
+        }),
+        "presented_query": urlencode({
+            "page": history_page.number,
+            "tipo": selected_kind,
+            "ano": presented_year or "",
+            "mes": presented_month or "",
+        }),
     })
 
 
@@ -233,7 +353,7 @@ def _parse_date_param(value):
         return None
 
 
-EARLIEST_VOTING_DATE = date(2023, 1, 1)
+EARLIEST_VOTING_DATE = date(2010, 1, 1)
 
 
 def _search_date_range(request):
@@ -243,10 +363,8 @@ def _search_date_range(request):
     if start_date or end_date:
         start_date = start_date or EARLIEST_VOTING_DATE
         end_date = end_date or today
-        if start_date < EARLIEST_VOTING_DATE:
-            start_date = EARLIEST_VOTING_DATE
-        if end_date > today:
-            end_date = today
+        start_date = min(max(start_date, EARLIEST_VOTING_DATE), today)
+        end_date = min(max(end_date, EARLIEST_VOTING_DATE), today)
         if start_date > end_date:
             start_date, end_date = end_date, start_date
     return start_date, end_date
@@ -254,6 +372,10 @@ def _search_date_range(request):
 
 def voting_list(request):
     sync_error = ""
+    try:
+        _ensure_recent_data()
+    except requests.RequestException as error:
+        sync_error = f"Dados legislativos temporariamente indisponíveis: {error}"
     query = request.GET.get("q", "").strip()
     start_date, end_date = _search_date_range(request)
     searching = bool(query or start_date or end_date)
@@ -265,7 +387,7 @@ def voting_list(request):
             try:
                 import_nominal_votings_range(range_start, range_end)
             except requests.RequestException as error:
-                sync_error = str(error)
+                sync_error = sync_error or str(error)
         votings = votings.filter(voted_at__date__gte=range_start, voted_at__date__lte=range_end)
         if query:
             votings = votings.filter(
@@ -281,7 +403,7 @@ def voting_list(request):
         except requests.RequestException as error:
             sync_error = sync_error or str(error)
     else:
-        votings = votings.filter(votes__isnull=False, project__isnull=False).distinct().order_by("-voted_at")[:10]
+        votings = votings.filter(votes__isnull=False).distinct().order_by("-voted_at")[:10]
         page_obj = None
     return render(request, "voting_list.html", {
         "page_obj": page_obj,

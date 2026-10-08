@@ -3,7 +3,7 @@ from decimal import Decimal
 from calendar import monthrange
 from math import ceil
 import re
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import urljoin
 
 import requests
 from django.db import transaction
@@ -12,7 +12,7 @@ from django.utils.dateparse import parse_date, parse_datetime
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from legislature.models import DataSource, Expense, LegislativeLevel, Mandate, Notification, Parliamentarian, Party, ProcessingEvent, Project, Vote, Voting
+from legislature.models import DataSource, Expense, HistoricalDeputySync, LegislativeLevel, Mandate, Notification, Parliamentarian, Party, ProcessingEvent, Project, Vote, Voting
 
 BASE_URL = "https://dadosabertos.camara.leg.br/api/v2/"
 
@@ -80,7 +80,16 @@ def upsert_party(data):
 def upsert_parliamentarian(data, data_source, mark_active=False):
     name = (data.get("nome") or "").strip()
     party = upsert_party(data)
-    defaults = {"civil_name": data.get("nomeCivil", ""), "photo_url": data.get("urlFoto", ""), "role": "Deputado federal", "state": data.get("siglaUf", ""), "level": LegislativeLevel.FEDERAL, "party": party, "source": data_source, "is_mock": False}
+    defaults = {
+        "civil_name": data.get("nomeCivil", ""),
+        "role": "Deputado federal",
+        "state": data.get("siglaUf", ""),
+        "party": party,
+        "photo_url": data.get("urlFoto", ""),
+        "level": LegislativeLevel.FEDERAL,
+        "source": data_source,
+        "is_mock": False,
+    }
     parliamentarian = Parliamentarian.objects.filter(external_id=str(data["id"])).first()
     if parliamentarian:
         if name:
@@ -88,10 +97,30 @@ def upsert_parliamentarian(data, data_source, mark_active=False):
         if mark_active and (name or parliamentarian.name):
             defaults["is_active"] = True
         for field, value in defaults.items():
+            if field in {"civil_name", "state", "photo_url"} and not value:
+                continue
+            if field == "party" and value is None:
+                continue
             setattr(parliamentarian, field, value)
         parliamentarian.save()
         return parliamentarian
-    return Parliamentarian.objects.create(external_id=str(data["id"]), name=name, is_active=bool(mark_active and name), **defaults)
+    return Parliamentarian.objects.create(
+        external_id=str(data["id"]),
+        name=name,
+        is_active=bool(mark_active and name),
+        **defaults,
+    )
+
+
+def refresh_parliamentarian_identity(parliamentarian, api=None):
+    """Atualiza partido e UF ausentes usando o cadastro oficial da Câmara."""
+    if parliamentarian.state and parliamentarian.party_id:
+        return parliamentarian
+    api = api or CamaraAPI()
+    deputy_data = api.get(f"deputados/{parliamentarian.external_id}").get("dados", {})
+    if deputy_data:
+        return upsert_parliamentarian(deputy_data, parliamentarian.source or source())
+    return parliamentarian
 
 
 def parse_year(value):
@@ -164,6 +193,51 @@ def sync_deputies(api, data_source, start_year, end_year):
     data_source.last_synced_at = timezone.now()
     data_source.save(update_fields=["last_synced_at"])
     return len(items)
+
+
+@transaction.atomic
+def sync_deputies_for_year(year, api=None):
+    """Importa os deputados e mandatos oficiais das legislaturas que cobrem o ano."""
+    previous_sync = HistoricalDeputySync.objects.filter(year=year).first()
+    if previous_sync:
+        return previous_sync.deputy_count
+    api = api or CamaraAPI()
+    data_source = source()
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    legislatures = api.all("legislaturas", {"ordem": "ASC", "ordenarPor": "id"})
+    imported = 0
+    for legislature in legislatures:
+        start_date = parse_date(legislature.get("dataInicio", ""))
+        end_date = parse_date(legislature.get("dataFim", "")) or date.max
+        if not start_date or start_date > year_end or end_date < year_start:
+            continue
+        mandate_end = None if end_date == date.max else end_date
+        deputies = api.all(
+            "deputados",
+            {
+                "idLegislatura": legislature["id"],
+                "ordem": "ASC",
+                "ordenarPor": "nome",
+            },
+        )
+        for item in deputies:
+            parliamentarian = upsert_parliamentarian(item, data_source)
+            Mandate.objects.update_or_create(
+                parliamentarian=parliamentarian,
+                start_date=start_date,
+                defaults={
+                    "end_date": mandate_end,
+                    "description": f"Legislatura {start_date.year}-{mandate_end.year if mandate_end else 'atual'}",
+                },
+            )
+            imported += 1
+    if imported:
+        HistoricalDeputySync.objects.update_or_create(
+            year=year,
+            defaults={"deputy_count": imported},
+        )
+    return imported
 
 
 def sync_projects(api, data_source, start_year, end_year, max_pages=None):
@@ -555,53 +629,47 @@ def explain_project(project):
     return " ".join(parts) or "A Câmara ainda não publicou uma ementa clara para esta proposição."
 
 
-def _page_number_from_href(href, fallback=1):
-    query = parse_qs(urlparse(href or "").query)
-    try:
-        return max(int(query.get("pagina", [fallback])[0]), 1)
-    except (TypeError, ValueError):
-        return fallback
-
-
-def _count_author_propositions(api, parliamentarian, year, kind=""):
+def _author_proposition_params(parliamentarian, year, kind, *, per_page, page):
     params = {
         "idDeputadoAutor": parliamentarian.external_id,
-        "ano": year,
-        "ordem": "DESC",
-        "ordenarPor": "id",
-        "itens": 1,
-        "pagina": 1,
-    }
-    siglas = PROPOSITION_KINDS.get(kind, PROPOSITION_KINDS[""])["siglas"]
-    if siglas:
-        params["siglaTipo"] = siglas
-    payload = api.get("proposicoes", params)
-    links = payload.get("links", [])
-    last = next((link.get("href") for link in links if link.get("rel") == "last"), "")
-    if last:
-        return _page_number_from_href(last, 1 if payload.get("dados") else 0)
-    return 1 if payload.get("dados") else 0
-
-
-def fetch_author_propositions(parliamentarian, year, page=1, per_page=7, kind="", api=None):
-    """Busca sob demanda as proposições do autor no ano, 7 por vez, com data e total de páginas."""
-    api = api or CamaraAPI()
-    params = {
-        "idDeputadoAutor": parliamentarian.external_id,
-        "ano": year,
         "ordem": "DESC",
         "ordenarPor": "id",
         "itens": per_page,
-        "pagina": max(page, 1),
+        "pagina": page,
     }
+    if year is not None:
+        params["ano"] = year
     siglas = PROPOSITION_KINDS.get(kind, PROPOSITION_KINDS[""])["siglas"]
     if siglas:
         params["siglaTipo"] = siglas
-    payload = api.get("proposicoes", params)
+    return params
+
+
+def fetch_author_propositions(parliamentarian, year=None, page=1, per_page=7, kind="", month=None, api=None):
+    """Busca proposições do autor; ano e tipo são filtros opcionais."""
+    api = api or CamaraAPI()
+    params = _author_proposition_params(
+        parliamentarian, year, kind, per_page=100, page=1
+    )
+    items = api.all("proposicoes", params)
+    if year is not None and month is not None:
+        month_prefix = f"{year}-{month:02d}"
+        items = [
+            item for item in items
+            if (item.get("dataApresentacao") or "").startswith(month_prefix)
+        ]
+    items.sort(
+        key=lambda item: (
+            item.get("dataApresentacao") or "",
+            int(item.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    total_pages = max(ceil(len(items) / per_page), 1)
+    start = (max(page, 1) - 1) * per_page
+    page_items = items[start:start + per_page]
     data_source = parliamentarian.source or source()
-    projects = [upsert_project(item, data_source, author=parliamentarian) for item in payload.get("dados", [])]
-    total_items = _count_author_propositions(api, parliamentarian, year, kind)
-    total_pages = max(ceil(total_items / per_page), 1) if total_items else 1
+    projects = [upsert_project(item, data_source, author=parliamentarian) for item in page_items]
     return projects, total_pages
 
 

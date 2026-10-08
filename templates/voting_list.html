@@ -1,42 +1,73 @@
 {% extends 'base.html' %}
 {% block title %}Votações | Radar Legislativo{% endblock %}
 {% block content %}
-<div class="container py-5">
-  <div class="project-toolbar mb-4">
+<div class="container py-5 voting-page-shell">
+  <header class="voting-page-heading">
     <div>
       <p class="eyebrow">CÂMARA DOS DEPUTADOS</p>
       {% if searching %}
-        <h1>Votações nominais{% if start_date and end_date %} de {{ start_date|date:'d/m/Y' }} a {{ end_date|date:'d/m/Y' }}{% endif %}</h1>
-        <p class="text-secondary mb-0">Busca no acervo da Câmara a partir de 2023, 10 por página.</p>
+        <h1>Busca de votações</h1>
+        <p class="text-secondary mb-0">Pesquise no acervo nominal da Câmara desde 2010.</p>
       {% else %}
         <h1>Últimas 10 votações nominais</h1>
-        <p class="text-secondary mb-0">Para ver um período maior, busque um intervalo a partir de 2023.</p>
+        <p class="text-secondary mb-0">Consulte as decisões mais recentes registradas pela Câmara.</p>
       {% endif %}
     </div>
-    <form class="filter-form">
-      <input name="q" value="{{ query }}" class="form-control" placeholder="Código, assunto ou tema">
-      <div class="date-range">
-        <label>De<input name="inicio" value="{{ start_date|date:'Y-m-d' }}" type="date" min="2023-01-01" class="form-control"></label>
-        <label>Até<input name="fim" value="{{ end_date|date:'Y-m-d' }}" type="date" min="2023-01-01" class="form-control"></label>
-        <button class="btn btn-outline-info">Buscar</button>
+  </header>
+
+  <section class="voting-filter-panel" aria-labelledby="voting-filters-title">
+    <div class="voting-filter-heading">
+      <div>
+        <h2 id="voting-filters-title">Encontre uma votação</h2>
+        <p>Combine um assunto ou código com um período para refinar a busca.</p>
       </div>
+      {% if searching %}<a class="voting-clear-link" href="{% url 'voting-list' %}">Limpar filtros</a>{% endif %}
+    </div>
+    <form class="voting-search-form" method="get">
+      <label class="voting-filter-field voting-query-field">
+        <span>Assunto ou matéria</span>
+        <input name="q" value="{{ query }}" class="form-control" placeholder="Ex.: PL 123/2024 ou educação" aria-label="Buscar por código, assunto ou tema">
+      </label>
+      <label class="voting-filter-field">
+        <span>Data inicial</span>
+        <input name="inicio" value="{{ start_date|date:'Y-m-d' }}" type="date" min="2010-01-01" class="form-control">
+      </label>
+      <label class="voting-filter-field">
+        <span>Data final</span>
+        <input name="fim" value="{{ end_date|date:'Y-m-d' }}" type="date" min="2010-01-01" class="form-control">
+      </label>
+      <button class="btn btn-info voting-search-submit" type="submit">Buscar votações</button>
     </form>
+    <p class="voting-filter-hint">Informe apenas uma data para buscar a partir de 2010 ou até hoje. Sem datas, a busca por assunto consulta todo o acervo.</p>
   </div>
 
   {% if sync_error %}<div class="alert alert-warning">Não foi possível consultar a Câmara agora: {{ sync_error }}</div>{% endif %}
-  {% if searching %}
-    <p class="text-secondary">{{ page_obj.paginator.count }} votações encontradas.</p>
-  {% endif %}
 
-  <div class="list-group legislative-list">
+  <div class="voting-results-heading">
+    <div>
+      <h2>{% if searching %}Resultados{% else %}Mais recentes{% endif %}</h2>
+      {% if searching %}
+        <p>{{ page_obj.paginator.count }} votações encontradas{% if start_date or end_date %} no período selecionado{% endif %}.</p>
+      {% else %}
+        <p>Votações nominais com registros individuais publicados.</p>
+      {% endif %}
+    </div>
+    {% if searching and start_date and end_date %}<span class="voting-period-badge">{{ start_date|date:'d/m/Y' }} – {{ end_date|date:'d/m/Y' }}</span>{% endif %}
+  </div>
+
+  <div class="list-group legislative-list voting-results-list">
     {% for voting in votings %}
-      <a href="{% url 'voting-detail' voting.pk %}" class="list-group-item list-group-item-action">
-        <div class="d-flex justify-content-between gap-3">
+      <a href="{% url 'voting-detail' voting.pk %}" class="list-group-item list-group-item-action voting-result-item">
+        <div class="voting-result-copy">
+          <span class="voting-result-label">{% if voting.project %}{{ voting.project.code }}{% else %}Votação nominal{% endif %}</span>
           <strong>
             {% if voting.project %}{{ voting.project.code }} · {{ voting.project.title|truncatechars:130 }}
             {% else %}{{ voting.title|truncatechars:160 }}{% endif %}
           </strong>
-          <span class="text-nowrap">{{ voting.voted_at|date:'d/m/Y H:i' }}</span>
+        </div>
+        <div class="voting-result-meta">
+          <time datetime="{{ voting.voted_at|date:'c' }}">{{ voting.voted_at|date:'d/m/Y' }}<span>{{ voting.voted_at|date:'H:i' }}</span></time>
+          <span class="voting-result-arrow" aria-hidden="true">→</span>
         </div>
       </a>
     {% empty %}
@@ -56,4 +87,7 @@
     </nav>
   {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>window.setTimeout(() => window.location.reload(), 60 * 60 * 1000);</script>
 {% endblock %}

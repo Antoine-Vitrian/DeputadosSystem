@@ -60,6 +60,12 @@ class Mandate(models.Model):
     description = models.CharField(max_length=180, blank=True)
 
 
+class HistoricalDeputySync(models.Model):
+    year = models.PositiveSmallIntegerField(unique=True)
+    deputy_count = models.PositiveIntegerField(default=0)
+    synced_at = models.DateTimeField(auto_now=True)
+
+
 class Theme(models.Model):
     name = models.CharField(max_length=120, unique=True)
 

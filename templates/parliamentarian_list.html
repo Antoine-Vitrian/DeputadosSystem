@@ -5,14 +5,44 @@
   <div class="project-toolbar mb-4">
     <div>
       <p class="eyebrow">DEPUTADOS FEDERAIS</p>
-      <h1>Parlamentares</h1>
-      <p class="text-secondary mb-0">Lista oficial carregada em páginas para manter a consulta rápida.</p>
+      <h1>{% if selected_year %}Deputados em {{ selected_year }}{% else %}Parlamentares atuais{% endif %}</h1>
+      <p class="text-secondary mb-0">Consulte os deputados em exercício ou selecione um ano desde 2010.</p>
     </div>
-    <form class="filter-form">
-      <div class="search-row">
-        <input name="q" value="{{ request.GET.q }}" class="form-control" placeholder="Buscar nome">
-        <button class="btn btn-outline-info">Filtrar</button>
-      </div>
+    <form class="parliamentarian-filter-form" method="get">
+      <label class="parliamentarian-filter-field">
+        <span>Período</span>
+        <select name="ano" class="form-select">
+          <option value="">Atuais</option>
+          {% for year in available_years %}
+            <option value="{{ year }}" {% if year == selected_year %}selected{% endif %}>{{ year }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="parliamentarian-filter-field">
+        <span>Nome</span>
+        <input name="q" value="{{ selected_name }}" class="form-control" placeholder="Buscar deputado">
+      </label>
+      <label class="parliamentarian-filter-field">
+        <span>Partido</span>
+        <select name="partido" class="form-select">
+          <option value="">Todos os partidos</option>
+          {% for party in party_options %}
+            <option value="{{ party.party_id }}" {% if selected_party == party.party_id|stringformat:"s" %}selected{% endif %}>
+              {{ party.party__acronym|default:party.party__name }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="parliamentarian-filter-field">
+        <span>Estado</span>
+        <select name="estado" class="form-select">
+          <option value="">Todos os estados</option>
+          {% for state in state_options %}
+            <option value="{{ state }}" {% if selected_state == state %}selected{% endif %}>{{ state }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="btn btn-outline-info parliamentarian-filter-submit" type="submit">Filtrar</button>
     </form>
   </div>
 
@@ -20,7 +50,7 @@
 
   <div class="table-responsive">
     <table class="table align-middle people-table">
-      <thead><tr><th colspan="2">Nome</th><th>Partido</th><th>Estado</th><th>Mandato</th></tr></thead>
+      <thead><tr><th colspan="2">Nome</th><th>Partido</th><th>Estado</th><th>Período</th></tr></thead>
       <tbody>
         {% for item in parliamentarians %}
           <tr class="row-link" data-href="{% url 'parliamentarian-detail' item.pk %}">
@@ -34,7 +64,7 @@
             <td><a class="link-light fw-semibold" href="{% url 'parliamentarian-detail' item.pk %}">{{ item.name }}</a></td>
             <td>{{ item.party.acronym|default:'-' }}</td>
             <td>{{ item.state|default:'-' }}</td>
-            <td>Federal</td>
+            <td>{{ selected_year|default:'Atual' }}</td>
           </tr>
         {% empty %}
           <tr><td colspan="5" class="text-secondary py-5 text-center">Nenhum deputado encontrado.</td></tr>
@@ -46,11 +76,11 @@
   {% if page_obj.has_other_pages %}
     <nav class="d-flex justify-content-between align-items-center">
       {% if page_obj.has_previous %}
-        <a class="btn btn-outline-secondary" href="?q={{ request.GET.q }}&page={{ page_obj.previous_page_number }}">← Anterior</a>
+        <a class="btn btn-outline-secondary" href="?{{ filter_query }}&page={{ page_obj.previous_page_number }}">← Anterior</a>
       {% else %}<span></span>{% endif %}
       <span class="text-secondary">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
       {% if page_obj.has_next %}
-        <a class="btn btn-outline-secondary" href="?q={{ request.GET.q }}&page={{ page_obj.next_page_number }}">Próxima →</a>
+        <a class="btn btn-outline-secondary" href="?{{ filter_query }}&page={{ page_obj.next_page_number }}">Próxima →</a>
       {% else %}<span></span>{% endif %}
     </nav>
   {% endif %}

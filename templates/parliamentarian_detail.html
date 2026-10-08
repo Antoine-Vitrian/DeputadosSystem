@@ -12,19 +12,51 @@
     <div>
       <p class="eyebrow">DEPUTADO FEDERAL</p>
       <h1>{{ parliamentarian.name }}</h1>
-      <p class="text-secondary">{{ parliamentarian.role|default:'Deputado federal' }} · {{ parliamentarian.party.acronym|default:'Partido não informado' }} · {{ parliamentarian.state|default:'-' }}</p>
+      <p class="text-secondary">{{ parliamentarian.role|default:'Deputado federal' }} · {{ party_display }} · {{ state_display }}</p>
     </div>
   </div>
+  {% if identity_error and party_display == 'Não informado' and state_display == 'Não informado' %}
+    <div class="alert alert-warning mt-3">Não foi possível atualizar partido e estado na Câmara neste momento.</div>
+  {% endif %}
 
   <div class="row g-4 mt-2">
     <div class="col-lg-8">
       <div class="chart-card">
-        <h2>Projetos apresentados em {{ presented_year }}</h2>
-        <div class="kind-filters">
-          {% for kind in kind_filters %}
-            <a class="kind-chip{% if selected_kind == kind.key %} is-active{% endif %}" href="?page={{ history_page.number }}&tipo={{ kind.key }}">{{ kind.label }}</a>
-          {% endfor %}
-        </div>
+        <h2>Proposições apresentadas{% if presented_year %} em {{ presented_year }}{% else %} · todo o histórico{% endif %}</h2>
+        <form class="proposition-filter-form mb-3" method="get">
+          <fieldset class="border-0 p-0 m-0 w-100">
+            <legend class="text-secondary small mb-2">Tipo de proposição</legend>
+            <div class="kind-filters" role="radiogroup" aria-label="Tipo de proposição">
+              {% for kind in kind_filters %}
+                <label class="kind-chip filter-kind-chip{% if selected_kind == kind.key %} is-active{% endif %}" title="Filtrar por {{ kind.label }}">
+                  <input class="visually-hidden" type="radio" name="tipo" value="{{ kind.key }}" {% if selected_kind == kind.key %}checked{% endif %}>
+                  <span>{{ kind.label }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          </fieldset>
+          <div class="proposition-date-filters">
+            <label class="proposition-date-field" for="proposition-year">
+              <span>Ano</span>
+              <select id="proposition-year" name="ano" class="form-select">
+                <option value="">Todo o histórico</option>
+                {% for year in available_years %}
+                  <option value="{{ year }}" {% if year == presented_year %}selected{% endif %}>{{ year }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="proposition-date-field" for="proposition-month">
+              <span>Mês</span>
+              <select id="proposition-month" name="mes" class="form-select">
+                <option value="">Todos os meses</option>
+                {% for month, label in month_choices %}
+                  <option value="{{ month }}" {% if month == presented_month %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button class="btn btn-outline-info proposition-filter-submit" type="submit">Aplicar período</button>
+          </div>
+        </form>
         {% if presented_error %}<div class="alert alert-warning">Não foi possível consultar a Câmara agora: {{ presented_error }}</div>{% endif %}
         <div class="list-group legislative-list">
           {% for project in presented_projects %}
@@ -35,7 +67,7 @@
               </div>
             </a>
           {% empty %}
-            <div class="empty-state">Nenhuma proposição deste tipo foi encontrada para este parlamentar em {{ presented_year }}.</div>
+            <div class="empty-state">Nenhuma proposição encontrada para os filtros selecionados.</div>
           {% endfor %}
         </div>
         {% if presented_projects or presented_pages > 1 %}
@@ -53,17 +85,35 @@
     </div>
 
     <div class="col-lg-4">
+      <div class="ranking-score-card mb-4">
+        <div class="ranking-score-heading">
+          <span class="ranking-score-mark" aria-hidden="true">R</span>
+          <div>
+            <p class="eyebrow mb-1">RANKING DOS POLÍTICOS</p>
+            <h2>Nota acumulada</h2>
+          </div>
+        </div>
+        {% if ranking_score %}
+          <div class="ranking-score-result">
+            <strong class="ranking-score-value ranking-score-{{ ranking_rating.class }}">{{ ranking_score.score|floatformat:2 }}<small>/10</small></strong>
+            <span class="ranking-score-badge ranking-score-badge-{{ ranking_rating.class }}">{{ ranking_rating.label }}</span>
+          </div>
+          <a class="ranking-score-link" href="{{ ranking_score.url }}" target="_blank" rel="noopener noreferrer">Ver perfil e metodologia ↗</a>
+        {% elif ranking_error %}
+          <p class="text-secondary mb-3">Não foi possível consultar a pontuação agora.</p>
+          <a href="https://ranking.org.br/ranking/politicos/todos/acumulado/1" target="_blank" rel="noopener noreferrer">Consultar no site do Ranking ↗</a>
+        {% else %}
+          <p class="text-secondary mb-3">Não foi localizado um perfil correspondente no Ranking.</p>
+          <a href="https://ranking.org.br/ranking/politicos/todos/acumulado/1" target="_blank" rel="noopener noreferrer">Abrir o Ranking dos Políticos ↗</a>
+        {% endif %}
+      </div>
       <div class="chart-card">
-        <h2>Votos registrados</h2>
-        <canvas id="votes"></canvas>
-        <small class="text-secondary">{{ vote_total }} registros, sem avaliação de mérito.</small>
-        <hr>
-        <p class="mb-0">Despesas registradas</p>
-        <strong>R$ {{ expenses_total|floatformat:2 }}</strong>
+        <h2>Registro de votos</h2>
+        <p class="mb-0 text-secondary">{{ vote_total }} votos nominais registrados, sem avaliação de mérito.</p>
       </div>
 
       <div class="chart-card mt-4">
-        <h2>Como votou desde 2023</h2>
+        <h2>Como votou desde 2010</h2>
         <div class="vote-log">
           {% for vote in vote_history %}
             <a href="{% url 'voting-detail' vote.voting.pk %}">
@@ -89,17 +139,26 @@
     </div>
   </div>
 </div>
-{{ votes|json_script:"parliamentarian-votes" }}
 {% endblock %}
 {% block scripts %}
 <script>
-const data = JSON.parse(document.getElementById('parliamentarian-votes').textContent);
-new Chart(document.getElementById('votes'), {
-  type: 'doughnut',
-  data: {
-    labels: data.map(item => item.label),
-    datasets: [{data: data.map(item => item.total), backgroundColor: ['#4ade80','#fb7185','#facc15','#94a3b8']}]
-  }
+const propositionYear = document.getElementById('proposition-year');
+const propositionMonth = document.getElementById('proposition-month');
+const updateMonthAvailability = () => {
+  propositionMonth.disabled = !propositionYear.value;
+  if (!propositionYear.value) propositionMonth.value = '';
+};
+propositionYear.addEventListener('change', updateMonthAvailability);
+updateMonthAvailability();
+
+document.querySelectorAll('.filter-kind-chip input').forEach(input => {
+  input.addEventListener('change', () => {
+    document.querySelectorAll('.filter-kind-chip').forEach(chip => {
+      chip.classList.toggle('is-active', chip.querySelector('input').checked);
+    });
+    input.form.requestSubmit();
+  });
 });
+
 </script>
 {% endblock %}

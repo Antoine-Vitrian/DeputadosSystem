@@ -40,7 +40,7 @@ py -3.13 manage.py sync_camara_diario
 py -3.13 manage.py sync_noticias
 ```
 
-Agende `sync_camara_diario` uma vez por dia e `sync_noticias` a cada hora no Agendador de Tarefas do Windows. A página inicial também atualiza o feed na primeira visita após uma hora.
+Agende `sync_camara_diario` uma vez por dia e `sync_noticias` a cada hora no Agendador de Tarefas do Windows. A página inicial atualiza as notícias a cada hora e as páginas de início e votações atualizam os dados recentes da Câmara automaticamente quando a última sincronização tem mais de uma hora.
 
 Para importar mais páginas ou despesas explicitamente:
 
@@ -59,13 +59,14 @@ py -3.13 manage.py atualizar_contexto_projetos
 
 A fonte é a API oficial de Dados Abertos: https://dadosabertos.camara.leg.br/
 As notícias vêm exclusivamente do RSS oficial do Poder360: https://www.poder360.com.br/feed/
+A nota acumulada exibida no perfil do parlamentar vem do Ranking dos Políticos: https://ranking.org.br/; a consulta é armazenada em cache por seis horas e vinculada ao perfil somente após validar o nome público.
 
 ## Rotas principais
 
-- `/` homepage
+- `/` início com notícias e atividade legislativa recente
 - `/dashboard/` indicadores
-- `/parlamentares/` parlamentares
-- `/votacoes/` últimas votações; busca por intervalo desde 2023
+- `/parlamentares/` parlamentares atuais ou deputados de um ano selecionado (2010 até o ano atual); cada perfil consulta o histórico de proposições e permite filtrar por tipo, ano e mês
+- `/votacoes/` últimas 10 votações nominais; busca no acervo por intervalo desde 2010
 - `/projetos/<id>/` resumo de uma proposição
 - `/pesquisa/` busca global
 - `/entenda/` regras da eleição e o que é PL, PEC, emenda e os outros tipos
