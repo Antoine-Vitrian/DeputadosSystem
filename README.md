@@ -17,6 +17,55 @@ py -3.13 manage.py runserver
 
 Abra `http://127.0.0.1:8000/`.
 
+## Executar com Docker
+
+É necessário ter o Docker Desktop instalado e em execução. No PowerShell, primeiro entre na pasta do projeto. Se ainda não houver um `.env` na raiz, crie-o copiando o exemplo; o comando abaixo preserva qualquer `.env` já configurado. Depois, suba a aplicação e o PostgreSQL:
+
+```powershell
+Set-Location "$HOME\Desktop\pessoal\analise_deputados"
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+docker compose up --build
+```
+
+Quando a aplicação estiver pronta, abra `http://localhost:8080/`. A porta 8080 no computador encaminha para a porta 8000 do Django no contêiner, evitando conflito com outro servidor local que já usa a porta 8000. O Compose espera o PostgreSQL ficar saudável e aplica as migrações do Django antes de iniciar o servidor.
+
+Para executar em segundo plano e acompanhar os logs:
+
+```powershell
+docker compose up --build -d
+docker compose logs -f web
+```
+
+Para parar os serviços:
+
+```powershell
+docker compose down
+```
+
+O banco fica armazenado no volume `postgres_data` e é preservado ao parar os serviços. Para apagar também o banco e todos os dados persistidos, use `docker compose down --volumes`.
+
+Para popular o banco com dados fictícios de demonstração:
+
+```powershell
+docker compose exec web python manage.py seed_mock
+```
+
+O `.env.example` contém valores apenas para desenvolvimento local. Antes de expor o sistema, configure uma `DJANGO_SECRET_KEY` forte e privada, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS` com os domínios autorizados e uma senha segura para o PostgreSQL; mantenha `DATABASE_URL` coerente com as credenciais do banco.
+
+## Deploy no Render
+
+Crie um serviço **Web Service** com runtime Python e configure:
+
+- **Build Command:** `pip install -r requirements.txt && python manage.py collectstatic --no-input`
+- **Start Command:** `python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`
+
+Adicione as variáveis de ambiente ao serviço:
+
+- `DJANGO_SECRET_KEY`: uma chave secreta forte e exclusiva para produção
+- `DJANGO_DEBUG`: `0`
+- `DJANGO_ALLOWED_HOSTS`: `.onrender.com`
+- `DATABASE_URL`: URL interna do PostgreSQL criado no Render
+
 ## Dados
 
 Para testar a interface sem dados externos:

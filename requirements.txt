@@ -4,3 +4,5 @@ django-filter>=24.3,<26.0
 requests>=2.32,<3.0
 pypdf>=5.0,<6.0
 psycopg[binary]>=3.2,<4.0
+gunicorn>=23.0,<24.0
+whitenoise>=6.9,<7.0
