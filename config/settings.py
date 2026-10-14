@@ -42,9 +42,24 @@ TEMPLATES = [{
 WSGI_APPLICATION = "config.wsgi.application"
 
 if os.getenv("DATABASE_URL", "").startswith("postgres"):
-    import urllib.parse
-    parsed = urllib.parse.urlparse(os.environ["DATABASE_URL"])
-    DATABASES = {"default": {"ENGINE": "django.db.backends.postgresql", "NAME": parsed.path[1:], "USER": parsed.username, "PASSWORD": parsed.password, "HOST": parsed.hostname, "PORT": parsed.port or 5432}}
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    database_url = os.environ["DATABASE_URL"]
+    parsed = urlparse(database_url)
+    database_options = parse_qs(parsed.query)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": unquote(parsed.path.lstrip("/")),
+            "USER": unquote(parsed.username or ""),
+            "PASSWORD": unquote(parsed.password or ""),
+            "HOST": parsed.hostname,
+            "PORT": parsed.port or 5432,
+            "OPTIONS": {
+                "sslmode": database_options.get("sslmode", ["require"])[0],
+            },
+        }
+    }
 else:
     DATABASES = {
         "default": {

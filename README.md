@@ -64,7 +64,9 @@ Adicione as variáveis de ambiente ao serviço:
 - `DJANGO_SECRET_KEY`: uma chave secreta forte e exclusiva para produção
 - `DJANGO_DEBUG`: `0`
 - `DJANGO_ALLOWED_HOSTS`: `.onrender.com`
-- `DATABASE_URL`: URL interna do PostgreSQL criado no Render
+- `DATABASE_URL`: URL de conexão do PostgreSQL
+
+O banco também pode ficar no Supabase, mantendo o Django hospedado no Render. No Supabase, abra **Connect → Session pooler** e copie a URL de conexão. Para o deploy, defina essa URL como `DATABASE_URL` no Render e confirme que ela usa `sslmode=require`. O serviço do Render e o projeto Supabase devem estar em regiões próximas para reduzir a latência.
 
 ## Dados
 
