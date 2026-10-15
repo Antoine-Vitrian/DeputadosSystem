@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  DJANGO_SECRET_KEY: ci-only-not-secret
+  DJANGO_DEBUG: "0"
+  DJANGO_ALLOWED_HOSTS: "127.0.0.1,localhost,testserver"
+
+jobs:
+  frontend:
+    name: Frontend (templates e estáticos)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Testar páginas renderizadas
+        run: python manage.py test legislature.tests.PublicPagesTests
+
+      - name: Verificar coleta dos arquivos estáticos
+        run: python manage.py collectstatic --noinput
+
+  backend:
+    name: Backend (Django)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Verificar configuração do Django
+        run: python manage.py check
+
+      - name: Verificar migrações pendentes
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Executar testes
+        run: python manage.py test
