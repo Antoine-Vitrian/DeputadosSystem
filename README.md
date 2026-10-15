@@ -1,6 +1,6 @@
 # Radar Legislativo
 
-MVP de transparência legislativa com Django, Django REST Framework e dados públicos.
+MVP de transparência legislativa com Django, Django REST Framework e dados públicos oficiais.
 
 ## Requisitos
 
