@@ -598,6 +598,8 @@ class PublicPagesTests(TestCase):
         self.assertContains(response, "Fontes oficiais")
         self.assertContains(response, "Câmara dos Deputados")
         self.assertContains(response, "Poder360")
+        self.assertContains(response, "Ranking dos Políticos")
+        self.assertContains(response, 'href="https://ranking.org.br/"')
         self.assertContains(response, "Login temporariamente indisponível")
         self.assertContains(response, "disabled")
         self.assertContains(response, "logo_radar_administrativo.svg", count=2)
