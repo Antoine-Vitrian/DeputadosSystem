@@ -2,7 +2,7 @@
 {% block title %}Votação de {{ voting.voted_at|date:'d/m/Y' }} | Radar Legislativo{% endblock %}
 {% block content %}
 <div class="container py-5">
-  <a class="text-secondary" href="{% url 'project-list' %}">← Projetos e votações</a>
+  <a class="text-secondary" href="{% url 'voting-list' %}">← Votações</a>
   {% if sync_error %}<div class="alert alert-warning mt-3">Não foi possível completar os dados: {{ sync_error }}</div>{% endif %}
   <article class="detail-head mt-4">
     <p class="eyebrow">VOTAÇÃO NOMINAL · {{ voting.voted_at|date:'d/m/Y H:i' }}</p>
