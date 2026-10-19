@@ -110,6 +110,7 @@ class PublicPagesTests(TestCase):
         self.assertEqual(self.client.get(f"/projetos/{self.project.pk}/").status_code, 200)
         response = self.client.get(f"/votacoes/{self.voting.pk}/")
         self.assertContains(response, "Deputada Teste")
+        self.assertContains(response, 'href="/votacoes/">← Votações</a>')
         self.assertContains(response, "Sim")
         self.assertContains(response, "Do que trata o projeto")
         self.assertContains(response, "Assuntos tratados")
