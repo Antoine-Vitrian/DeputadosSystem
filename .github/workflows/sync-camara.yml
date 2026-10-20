@@ -4,13 +4,15 @@ on:
   schedule:
     - cron: "0 * * * *"
     - cron: "17 6 * * *"
+    - cron: "37 6 * * *"
   workflow_dispatch:
     inputs:
       carga:
-        description: "Carga rápida ou importação histórica completa"
+        description: "Atualização recente, incremental ou carga histórica completa"
         type: choice
         options:
           - recente
+          - incremental
           - historica_completa
         default: recente
         required: true
@@ -33,6 +35,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  migrate:
+    name: Aplicar migrações para sincronização
+    if: (github.event_name == 'schedule' && github.event.schedule == '37 6 * * *') || (github.event_name == 'workflow_dispatch' && (inputs.carga == 'incremental' || inputs.carga == 'historica_completa'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Validar acesso ao banco
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Configure o secret DATABASE_URL com a URL externa do PostgreSQL."
+            exit 1
+          fi
+
+      - name: Aplicar migrações
+        run: python manage.py migrate --noinput
+
   votacoes:
     name: Atualizar votações recentes
     if: (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.carga == 'recente')
@@ -99,9 +134,44 @@ jobs:
       - name: Atualizar parlamentares
         run: python manage.py sync_parlamentares
 
+  incremental:
+    name: Atualizar somente dados novos
+    if: (github.event_name == 'schedule' && github.event.schedule == '37 6 * * *') || (github.event_name == 'workflow_dispatch' && inputs.carga == 'incremental')
+    needs: migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Validar acesso ao banco
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Configure o secret DATABASE_URL com a URL externa do PostgreSQL."
+            exit 1
+          fi
+
+      - name: Atualizar registros posteriores à carga histórica
+        run: python manage.py sync_camara_incremental
+
   historico:
     name: Importar dados históricos completos
     if: github.event_name == 'workflow_dispatch' && inputs.carga == 'historica_completa'
+    needs: migrate
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
@@ -136,14 +206,15 @@ jobs:
 
           start = int(os.environ["DESDE"])
           end = int(os.environ["ATE"])
-          if start < 2010 or end > date.today().year or start > end:
-              raise SystemExit("O período deve estar entre 2010 e o ano atual, com desde <= ate.")
+          if start != 2010 or end > date.today().year or start > end:
+              raise SystemExit("Para habilitar a sincronização incremental, desde deve ser 2010 e ate não pode ultrapassar o ano atual.")
           PY
 
       - name: Importar deputados, projetos e votações por ano
         run: |
           python manage.py shell <<'PY'
           import os
+          from datetime import date
 
           from services.camara import (
               CamaraAPI,
@@ -171,14 +242,34 @@ jobs:
           for year in range(start, end + 1):
               print(f"Importando todos os projetos de {year}...")
               print(f"Projetos importados: {sync_projects(api, data_source, year, year)}")
+          data_source.projects_synced_through = (
+              date(end, 12, 31) if end < timezone.localdate().year else timezone.localdate()
+          )
+          data_source.save(update_fields=["projects_synced_through"])
 
           for year in range(start, end + 1):
               print(f"Importando votações e votos individuais de {year}...")
               print(f"Votações importadas: {sync_votings(api, data_source, year, year)}")
+          data_source.votings_synced_through = (
+              date(end, 12, 31) if end < timezone.localdate().year else timezone.localdate()
+          )
+          data_source.save(update_fields=["votings_synced_through"])
 
           for year in range(start, end + 1):
               print(f"Importando despesas parlamentares de {year}...")
               print(f"Despesas importadas: {sync_expenses(api, data_source, year, year)}")
+          if end < timezone.localdate().year:
+              expenses_through = date(end, 12, 1)
+          elif timezone.localdate().month == 1:
+              expenses_through = date(timezone.localdate().year - 1, 12, 1)
+          else:
+              expenses_through = date(
+                  timezone.localdate().year,
+                  timezone.localdate().month - 1,
+                  1,
+              )
+          data_source.expenses_synced_through = expenses_through
+          data_source.save(update_fields=["expenses_synced_through"])
 
           data_source.last_parliamentarians_synced_at = timezone.now()
           data_source.save(update_fields=["last_parliamentarians_synced_at"])
