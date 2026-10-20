@@ -191,7 +191,8 @@ def sync_deputies(api, data_source, start_year, end_year):
             defaults={"description": "Mandato federal atual"},
         )
     data_source.last_synced_at = timezone.now()
-    data_source.save(update_fields=["last_synced_at"])
+    data_source.last_parliamentarians_synced_at = data_source.last_synced_at
+    data_source.save(update_fields=["last_synced_at", "last_parliamentarians_synced_at"])
     return len(items)
 
 
@@ -339,6 +340,9 @@ def sync_recent_legislative_data(days=120, page_count=5, nominal_target=12):
                 break
         if nominal_found >= nominal_target:
             break
+    data_source.last_synced_at = timezone.now()
+    data_source.last_votings_synced_at = data_source.last_synced_at
+    data_source.save(update_fields=["last_synced_at", "last_votings_synced_at"])
     return {
         "deputies": Parliamentarian.objects.filter(level=LegislativeLevel.FEDERAL, is_active=True, is_mock=False).count(),
         "projects": Project.objects.filter(votings__votes__isnull=False, is_mock=False).distinct().count(),

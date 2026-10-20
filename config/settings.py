@@ -56,7 +56,7 @@ if os.getenv("DATABASE_URL", "").startswith("postgres"):
             "HOST": parsed.hostname,
             "PORT": parsed.port or 5432,
             "OPTIONS": {
-                "sslmode": database_options.get("sslmode", ["require"])[0],
+                "sslmode": database_options.get("sslmode", ["prefer"])[0],
             },
         }
     }

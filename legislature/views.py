@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date, datetime, timedelta
 from urllib.parse import urlencode
 
@@ -9,43 +10,46 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from services.camara import PROPOSITION_KINDS, ensure_voting_projects, fetch_author_propositions, hydrate_project, hydrate_voting, import_nominal_votings_range, refresh_parliamentarian_identity, source, sync_deputies_for_year, sync_recent_legislative_data
+from services.camara import CamaraAPI, PROPOSITION_KINDS, ensure_voting_projects, fetch_author_propositions, hydrate_project, hydrate_voting, import_nominal_votings_range, refresh_parliamentarian_identity, source, sync_deputies, sync_deputies_for_year, sync_recent_legislative_data
 from services.teor import ensure_text_summary
 from services.news import news_refresh_due, sync_daily_news
 from services.ranking import fetch_parliamentarian_score
 
-from .models import LegislativeLevel, NewsArticle, Parliamentarian, Project, Theme, Vote, Voting
+from .models import HistoricalDeputySync, LegislativeLevel, Mandate, NewsArticle, Parliamentarian, Project, Theme, Vote, Voting
 
 
-def _ensure_recent_data():
+def _sync_is_stale(last_synced_at):
+    return not last_synced_at or last_synced_at < timezone.now() - timedelta(hours=1)
+
+
+def _ensure_recent_parliamentarians():
     data_source = source()
-    stale = not data_source.last_synced_at or data_source.last_synced_at < timezone.now() - timedelta(hours=1)
-    if stale:
+    if _sync_is_stale(data_source.last_parliamentarians_synced_at):
+        sync_deputies(CamaraAPI(), data_source, timezone.localdate().year, timezone.localdate().year)
+
+
+def _ensure_recent_votings():
+    data_source = source()
+    if _sync_is_stale(data_source.last_votings_synced_at):
         sync_recent_legislative_data()
 
 
 def home(request):
     reference_date = timezone.localdate() - timedelta(days=1)
     sync_error = ""
-    try:
-        _ensure_recent_data()
-    except requests.RequestException as error:
-        sync_error = f"Dados legislativos temporariamente indisponíveis: {error}"
     if news_refresh_due():
         try:
             sync_daily_news(reference_date)
         except (requests.RequestException, ValueError) as error:
-            sync_error = sync_error or f"Notícias temporariamente indisponíveis: {error}"
+            sync_error = f"Notícias temporariamente indisponíveis: {error}"
     articles = NewsArticle.objects.filter(
         category=NewsArticle.Category.POLITICS,
         source__identifier="poder360-rss",
     ).select_related("source")[:12]
     context = {
-        "reference_date": reference_date,
         "articles": articles,
         "sync_error": sync_error,
         "projects": Project.objects.filter(votings__votes__isnull=False).annotate(latest_vote=Max("votings__voted_at")).select_related("author").order_by("-latest_vote")[:6],
-        "votings": Voting.objects.filter(votes__isnull=False, project__isnull=False).distinct().select_related("project").order_by("-voted_at")[:6],
     }
     return render(request, "home.html", context)
 
@@ -68,7 +72,7 @@ def dashboard(request):
     if selected_year not in available_years:
         selected_year = available_years[0] if available_years else date.today().year
 
-    voting_ids = list(
+    voting_ids = (
         Voting.objects.filter(
             level=LegislativeLevel.FEDERAL,
             voted_at__year=selected_year,
@@ -81,7 +85,7 @@ def dashboard(request):
     votes = Vote.objects.filter(voting_id__in=voting_ids)
     choice_labels = dict(Vote.Choice.choices)
 
-    total_votings = len(voting_ids)
+    total_votings = votings.count()
     approved = votings.filter(result="Aprovado").count()
     rejected = votings.filter(result="Não aprovado").count()
     total_votes = votes.count()
@@ -155,16 +159,17 @@ def dashboard(request):
 def parliamentarian_list(request):
     sync_error = ""
     try:
-        _ensure_recent_data()
-    except requests.RequestException as error:
-        sync_error = str(error)
-    try:
         selected_year = int(request.GET.get("ano") or 0)
     except ValueError:
         selected_year = 0
     current_year = timezone.localdate().year
     if selected_year < 2010 or selected_year > current_year:
         selected_year = 0
+    if not selected_year:
+        try:
+            _ensure_recent_parliamentarians()
+        except requests.RequestException as error:
+            sync_error = str(error)
     queryset = (
         Parliamentarian.objects.filter(level=LegislativeLevel.FEDERAL, is_mock=False)
         .exclude(name="")
@@ -260,17 +265,48 @@ def parliamentarian_detail(request, pk):
     presented_projects = []
     presented_pages = 1
     presented_error = ""
-    try:
-        presented_projects, presented_pages = fetch_author_propositions(
-            parliamentarian,
-            presented_year,
-            presented_page,
-            per_page=7,
-            kind=selected_kind,
-            month=presented_month,
+    not_in_mandate_period = False
+    if presented_year:
+        period_start = date(presented_year, presented_month or 1, 1)
+        period_end = (
+            date(presented_year, presented_month, monthrange(presented_year, presented_month)[1])
+            if presented_month
+            else date(presented_year, 12, 31)
         )
-    except requests.RequestException as error:
-        presented_error = str(error)
+        has_mandate = Mandate.objects.filter(
+            parliamentarian=parliamentarian,
+        ).filter(
+            Q(start_date__isnull=True) | Q(start_date__lte=period_end)
+        ).filter(
+            Q(end_date__isnull=True) | Q(end_date__gte=period_start)
+        ).exists()
+        year_is_synced = HistoricalDeputySync.objects.filter(year=presented_year).exists()
+        if not has_mandate and not year_is_synced:
+            try:
+                sync_deputies_for_year(presented_year)
+                year_is_synced = True
+            except requests.RequestException as error:
+                presented_error = f"Não foi possível confirmar o mandato neste período: {error}"
+            has_mandate = Mandate.objects.filter(
+                parliamentarian=parliamentarian,
+            ).filter(
+                Q(start_date__isnull=True) | Q(start_date__lte=period_end)
+            ).filter(
+                Q(end_date__isnull=True) | Q(end_date__gte=period_start)
+            ).exists()
+        not_in_mandate_period = year_is_synced and not has_mandate
+    if not not_in_mandate_period and not presented_error:
+        try:
+            presented_projects, presented_pages = fetch_author_propositions(
+                parliamentarian,
+                presented_year,
+                presented_page,
+                per_page=7,
+                kind=selected_kind,
+                month=presented_month,
+            )
+        except requests.RequestException as error:
+            presented_error = str(error)
     ranking_score = None
     ranking_error = ""
     try:
@@ -318,6 +354,7 @@ def parliamentarian_detail(request, pk):
         "presented_page": presented_page,
         "presented_pages": presented_pages,
         "presented_error": presented_error,
+        "not_in_mandate_period": not_in_mandate_period,
         "ranking_score": ranking_score,
         "ranking_rating": ranking_rating,
         "ranking_error": ranking_error,
@@ -371,7 +408,7 @@ def _search_date_range(request):
 def voting_list(request):
     sync_error = ""
     try:
-        _ensure_recent_data()
+        _ensure_recent_votings()
     except requests.RequestException as error:
         sync_error = f"Dados legislativos temporariamente indisponíveis: {error}"
     query = request.GET.get("q", "").strip()
