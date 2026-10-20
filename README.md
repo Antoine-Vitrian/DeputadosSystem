@@ -19,38 +19,115 @@ Abra `http://127.0.0.1:8000/`.
 
 ## Executar com Docker
 
-É necessário ter o Docker Desktop instalado e em execução. No PowerShell, primeiro entre na pasta do projeto. Se ainda não houver um `.env` na raiz, crie-o copiando o exemplo; o comando abaixo preserva qualquer `.env` já configurado. Depois, suba a aplicação e o PostgreSQL:
+O Docker Compose inicia dois containers: `web` (Django, que também serve o frontend) e `db` (PostgreSQL 17). É necessário ter o Docker Desktop instalado e em execução no Windows, ou Docker Engine e o plugin Docker Compose no Linux.
+
+### 1. Abra um terminal na pasta do projeto
+
+No PowerShell:
 
 ```powershell
 Set-Location "$HOME\Desktop\pessoal\analise_deputados"
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-docker compose up --build
 ```
 
-Quando a aplicação estiver pronta, abra `http://localhost:8080/`. A porta 8080 no computador encaminha para a porta 8000 do Django no contêiner, evitando conflito com outro servidor local que já usa a porta 8000. O Compose espera o PostgreSQL ficar saudável e aplica as migrações do Django antes de iniciar o servidor.
+No Ubuntu/WSL, se o projeto estiver na pasta `Desktop\pessoal\analise_deputados` do Windows, substitua `NOME_DO_USUARIO` pelo nome da pasta do seu usuário em `C:\Users`:
 
-Para executar em segundo plano e acompanhar os logs:
+```bash
+cd /mnt/c/Users/NOME_DO_USUARIO/Desktop/pessoal/analise_deputados
+```
+
+Confirme que está na pasta que contém `Dockerfile` e `compose.yaml`:
+
+```text
+Dockerfile
+compose.yaml
+```
+
+### 2. Configure o ambiente
+
+Se ainda não existir um `.env` na raiz, copie o exemplo. No PowerShell:
 
 ```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+No Ubuntu/WSL:
+
+```bash
+if [ ! -f .env ]; then cp .env.example .env; fi
+```
+
+Abra `.env` (`notepad .env` no PowerShell ou `nano .env` no Ubuntu) e configure `POSTGRES_PASSWORD` com uma senha sua. Use a mesma senha em `DATABASE_URL`. Exemplo de formato:
+
+```dotenv
+POSTGRES_DB=radar_legislativo
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=escolha-uma-senha
+DATABASE_URL=postgres://postgres:escolha-uma-senha@db:5432/radar_legislativo
+```
+
+Mantenha também `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` e `DJANGO_ALLOWED_HOSTS` no arquivo. Para desenvolvimento local, os valores de `.env.example` permitem acessar pelo endereço local; não use a chave ou senha de exemplo em um serviço exposto publicamente. O hostname `db` na `DATABASE_URL` é o nome do serviço PostgreSQL dentro do Compose; não troque por `localhost`.
+
+Se a senha tiver caracteres especiais, codifique-os para URL dentro de `DATABASE_URL` (por exemplo, `@` como `%40`). Se já existir um volume PostgreSQL com dados, mantenha as credenciais que foram usadas quando esse banco foi criado; mudar `.env` não altera automaticamente a senha dentro de um banco existente.
+
+### 3. Construa e inicie a aplicação e o banco
+
+```bash
 docker compose up --build -d
+```
+
+O comando constrói a imagem do Django e inicia os dois containers em segundo plano. O Compose espera o PostgreSQL ficar saudável; em seguida, o container `web` aplica as migrações do Django e inicia o Gunicorn.
+
+### 4. Confira o estado e acesse o sistema
+
+```bash
+docker compose ps
+docker compose logs --tail 50 web
+```
+
+Confirme que `db` aparece como `healthy` e `web` como `Up`. A aplicação fica disponível em <http://localhost:8080/>. A porta `8080` do computador encaminha para a porta `8000` do Django no container. O endpoint da API também fica disponível em <http://localhost:8080/api/v1/>.
+
+Para acompanhar os logs ao vivo:
+
+```bash
 docker compose logs -f web
 ```
 
-Para parar os serviços:
+Para conferir os logs do PostgreSQL:
 
 ```powershell
-docker compose down
+docker compose logs -f db
 ```
 
-O banco fica armazenado no volume `postgres_data` e é preservado ao parar os serviços. Para apagar também o banco e todos os dados persistidos, use `docker compose down --volumes`.
+### Dados e operações úteis
 
-Para popular o banco com dados fictícios de demonstração:
+O banco começa vazio. Para inserir dados fictícios de demonstração:
 
 ```powershell
 docker compose exec web python manage.py seed_mock
 ```
 
-O `.env.example` contém valores apenas para desenvolvimento local. Antes de expor o sistema, configure uma `DJANGO_SECRET_KEY` forte e privada, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS` com os domínios autorizados e uma senha segura para o PostgreSQL; mantenha `DATABASE_URL` coerente com as credenciais do banco.
+Para importar dados oficiais da Câmara e notícias (requer acesso à internet):
+
+```powershell
+docker compose exec web python manage.py sync_camara
+docker compose exec web python manage.py sync_noticias
+```
+
+Na página inicial, o feed de notícias é atualizado no Poder360 quando já passou uma hora desde a última sincronização; se a fonte estiver indisponível, as notícias salvas continuam sendo exibidas. A lista de parlamentares atualiza os dados atuais ao ser aberta, no máximo uma vez por hora. A sincronização recente de votações só acontece ao abrir a página de votações, também no máximo uma vez por hora. Dados históricos de parlamentares são consultados quando o período é solicitado. Os comandos acima também podem ser agendados para atualizar os dados sem depender de uma visita à página.
+
+Para parar os serviços sem apagar o banco:
+
+```powershell
+docker compose down
+```
+
+Os dados do PostgreSQL ficam no volume `postgres_data` e são preservados por `docker compose down`. Para iniciar novamente, use `docker compose up -d`. Para reconstruir a aplicação depois de alterar o código, use `docker compose up --build -d`.
+
+**Atenção:** `docker compose down --volumes` remove o volume do banco e apaga os dados persistidos. Use somente se quiser apagar o banco intencionalmente.
+
+Se um serviço não iniciar, confira `docker compose ps` e `docker compose logs db` ou `docker compose logs web`. Verifique também se o `.env` existe e se a senha em `POSTGRES_PASSWORD` corresponde à senha incluída em `DATABASE_URL`.
+
+O Docker Hub armazena imagens, mas não inicia os containers. Para executar o sistema completo localmente, use os comandos do Compose acima; eles iniciam tanto a aplicação quanto o PostgreSQL.
 
 ## Deploy no Render
 

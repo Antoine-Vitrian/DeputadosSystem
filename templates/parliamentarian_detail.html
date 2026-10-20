@@ -67,7 +67,13 @@
               </div>
             </a>
           {% empty %}
-            <div class="empty-state">Nenhuma proposição encontrada para os filtros selecionados.</div>
+            <div class="empty-state">
+              {% if not_in_mandate_period %}
+                {{ parliamentarian.name }} não exercia mandato de deputado federal no período selecionado.
+              {% else %}
+                Nenhuma proposição encontrada para os filtros selecionados.
+              {% endif %}
+            </div>
           {% endfor %}
         </div>
         {% if presented_projects or presented_pages > 1 %}

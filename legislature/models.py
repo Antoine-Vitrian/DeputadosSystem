@@ -12,6 +12,8 @@ class DataSource(models.Model):
     url = models.URLField()
     identifier = models.CharField(max_length=120, blank=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_parliamentarians_synced_at = models.DateTimeField(null=True, blank=True)
+    last_votings_synced_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.name

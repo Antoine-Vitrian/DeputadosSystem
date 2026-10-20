@@ -10,6 +10,7 @@ from django.utils import timezone
 from .models import (
     DailyBrief,
     DataSource,
+    HistoricalDeputySync,
     LegislativeLevel,
     Mandate,
     NewsArticle,
@@ -29,6 +30,8 @@ class PublicPagesTests(TestCase):
             url="https://dadosabertos.camara.leg.br/",
             identifier="camara-dados-abertos",
             last_synced_at=timezone.now(),
+            last_parliamentarians_synced_at=timezone.now(),
+            last_votings_synced_at=timezone.now(),
         )
         self.news_source = DataSource.objects.create(
             name="Poder360",
@@ -145,13 +148,40 @@ class PublicPagesTests(TestCase):
         self.assertNotContains(response, "Todos os partidos")
         self.assertEqual(self.client.get("/projetos/").status_code, 302)
 
-    def test_voting_list_refreshes_recent_data_automatically(self):
+    def test_news_refreshes_hourly_and_recent_votings_load_only_on_voting_page(self):
         self.source.last_synced_at = timezone.now() - timedelta(hours=2)
+        self.source.last_parliamentarians_synced_at = self.source.last_synced_at
+        self.source.last_votings_synced_at = self.source.last_synced_at
         self.source.save(update_fields=["last_synced_at"])
-        with mock.patch("legislature.views.sync_recent_legislative_data") as refresh:
-            response = self.client.get("/votacoes/")
+        self.source.save(update_fields=["last_parliamentarians_synced_at", "last_votings_synced_at"])
+        self.news_source.last_synced_at = timezone.now() - timedelta(hours=2)
+        self.news_source.save(update_fields=["last_synced_at"])
+        with (
+            mock.patch("legislature.views.sync_deputies") as refresh_deputies,
+            mock.patch("legislature.views.sync_recent_legislative_data") as refresh_votings,
+            mock.patch("legislature.views.news_refresh_due", return_value=True) as news_refresh_due,
+            mock.patch("legislature.views.sync_daily_news") as refresh_news,
+        ):
+            for path in ("/", "/parlamentares/", "/dashboard/"):
+                with self.subTest(path=path):
+                    self.assertEqual(self.client.get(path).status_code, 200)
+            self.assertEqual(self.client.get("/votacoes/").status_code, 200)
+
+        refresh_deputies.assert_called_once()
+        refresh_votings.assert_called_once_with()
+        news_refresh_due.assert_called_once_with()
+        refresh_news.assert_called_once_with(timezone.localdate() - timedelta(days=1))
+
+    def test_home_keeps_saved_news_when_hourly_refresh_fails(self):
+        with (
+            mock.patch("legislature.views.news_refresh_due", return_value=True),
+            mock.patch("legislature.views.sync_daily_news", side_effect=requests.ConnectionError("sem rede")),
+        ):
+            response = self.client.get("/")
+
         self.assertEqual(response.status_code, 200)
-        refresh.assert_called_once_with()
+        self.assertContains(response, "Notícia política de teste")
+        self.assertContains(response, "Exibindo as últimas notícias salvas")
 
     def test_voting_list_fetches_camara_range_when_filtering(self):
         past = timezone.localdate() - timedelta(days=30)
@@ -179,6 +209,11 @@ class PublicPagesTests(TestCase):
         self.assertContains(response, "Deputada Teste")
 
     def test_parliamentarian_page_lists_votes_and_presented_projects(self):
+        Mandate.objects.create(
+            parliamentarian=self.deputy,
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 12, 31),
+        )
         with mock.patch("legislature.views.fetch_author_propositions", return_value=([self.project], 4)) as fetch:
             response = self.client.get(f"/parlamentares/{self.deputy.pk}/")
             self.assertContains(response, "Como votou desde 2010")
@@ -445,6 +480,35 @@ class PublicPagesTests(TestCase):
         self.assertNotContains(response, "expenses_total")
         self.assertNotContains(response, 'id="votes"')
         self.assertContains(response, "1 votos nominais registrados")
+
+    def test_profile_explains_when_deputy_was_not_in_office_in_selected_year(self):
+        year = 2024
+        Mandate.objects.create(
+            parliamentarian=self.deputy,
+            start_date=date(2015, 1, 1),
+            end_date=date(2018, 12, 31),
+        )
+        HistoricalDeputySync.objects.create(year=year, deputy_count=1)
+        with mock.patch("legislature.views.fetch_author_propositions") as fetch:
+            response = self.client.get(f"/parlamentares/{self.deputy.pk}/?ano={year}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Deputada Teste não exercia mandato de deputado federal no período selecionado.")
+        fetch.assert_not_called()
+
+    def test_profile_fetches_propositions_for_year_with_overlapping_mandate(self):
+        year = 2024
+        Mandate.objects.create(
+            parliamentarian=self.deputy,
+            start_date=date(year, 1, 1),
+            end_date=date(year, 12, 31),
+        )
+        with mock.patch("legislature.views.fetch_author_propositions", return_value=([], 1)) as fetch:
+            response = self.client.get(f"/parlamentares/{self.deputy.pk}/?ano={year}")
+
+        self.assertEqual(response.status_code, 200)
+        fetch.assert_called_once()
+        self.assertNotContains(response, "não era deputado federal")
 
     def test_parliamentarian_list_hides_incomplete_records(self):
         Parliamentarian.objects.create(
