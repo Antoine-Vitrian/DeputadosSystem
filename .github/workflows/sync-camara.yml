@@ -1,0 +1,81 @@
+name: Atualizar dados da Câmara
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-camara
+  cancel-in-progress: false
+
+jobs:
+  votacoes:
+    name: Atualizar votações recentes
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Validar acesso ao banco
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Configure o secret DATABASE_URL com a URL externa do PostgreSQL."
+            exit 1
+          fi
+
+      - name: Atualizar as dez votações mais recentes
+        run: python manage.py sync_camara_diario
+
+  parlamentares:
+    name: Atualizar parlamentares
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 6 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Validar acesso ao banco
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Configure o secret DATABASE_URL com a URL externa do PostgreSQL."
+            exit 1
+          fi
+
+      - name: Atualizar parlamentares
+        run: python manage.py sync_parlamentares

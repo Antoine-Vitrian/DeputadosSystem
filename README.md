@@ -113,14 +113,14 @@ docker compose exec web python manage.py sync_camara
 docker compose exec web python manage.py sync_noticias
 ```
 
-Na página inicial, o feed de notícias é atualizado no Poder360 quando já passou uma hora desde a última sincronização; se a fonte estiver indisponível, as notícias salvas continuam sendo exibidas. As páginas de parlamentares e votações usam os dados salvos no PostgreSQL e não esperam pela Câmara para abrir. Atualize esses dados com os comandos abaixo; a página de votação carrega votos individuais e detalhes somente quando uma votação é aberta.
+Na página inicial, o feed de notícias é atualizado no Poder360 quando já passou uma hora desde a última sincronização; se a fonte estiver indisponível, as notícias salvas continuam sendo exibidas. As páginas de parlamentares e votações usam os dados salvos no PostgreSQL e não esperam pela Câmara para abrir. A página de votação carrega votos individuais e detalhes somente quando uma votação é aberta.
 
 ```powershell
 docker compose exec web python manage.py sync_parlamentares
 docker compose exec web python manage.py sync_camara_diario
 ```
 
-No Render, configure Cron Jobs para executar `sync_parlamentares` diariamente e `sync_camara_diario` a cada hora.
+O workflow `Atualizar dados da Câmara` no GitHub Actions executa `sync_camara_diario` a cada hora e `sync_parlamentares` diariamente, sem precisar contratar Cron Jobs do Render. Para habilitá-lo, adicione `DATABASE_URL` em **GitHub → Settings → Secrets and variables → Actions → New repository secret**. Use uma URL externa do PostgreSQL acessível pelo GitHub Actions, com SSL habilitado quando exigido pelo provedor. Workflows agendados rodam a partir da branch padrão do repositório; faça merge para `main` para ativar o agendamento. Também é possível iniciá-lo manualmente em **Actions → Atualizar dados da Câmara → Run workflow**. Rode-o manualmente uma vez para preencher os dados iniciais.
 
 Para parar os serviços sem apagar o banco:
 
@@ -175,7 +175,7 @@ py -3.13 manage.py sync_parlamentares
 py -3.13 manage.py sync_camara_diario
 ```
 
-Agende `sync_parlamentares` uma vez por dia e `sync_camara_diario` a cada hora. No Render, crie dois serviços **Cron Job** usando o mesmo repositório e banco PostgreSQL do serviço web: um com o comando `python manage.py sync_parlamentares` e agenda diária; outro com `python manage.py sync_camara_diario` e agenda `0 * * * *` (uma vez por hora, em UTC). Esses jobs atualizam o banco em segundo plano: as listas de parlamentares e votações respondem usando os dados salvos, sem esperar pela API da Câmara. A lista mostra as dez votações nominais mais recentes; os votos individuais e detalhes completos só são buscados ao abrir uma votação. Se os cron jobs ainda não tiverem executado, rode os dois comandos uma vez para preencher os dados iniciais.
+O workflow `Atualizar dados da Câmara` no GitHub Actions executa `sync_parlamentares` diariamente e `sync_camara_diario` a cada hora (UTC). Configure o secret `DATABASE_URL` no repositório GitHub e use a URL externa do PostgreSQL. Workflows agendados só rodam na branch padrão; faça merge dessas alterações para `main` para habilitar as execuções periódicas. A sincronização atualiza o banco em segundo plano; as páginas mostram os dados salvos sem esperar pela API da Câmara. A lista exibe as dez votações nominais mais recentes; votos individuais e detalhes completos são carregados ao abrir uma votação. Para preencher os dados imediatamente, execute os comandos manualmente uma vez pelo Render Shell ou inicie o workflow em **Actions → Atualizar dados da Câmara → Run workflow**.
 
 Para importar mais páginas ou despesas explicitamente:
 
