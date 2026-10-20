@@ -5,6 +5,25 @@ on:
     - cron: "0 * * * *"
     - cron: "17 6 * * *"
   workflow_dispatch:
+    inputs:
+      carga:
+        description: "Carga rápida ou importação histórica completa"
+        type: choice
+        options:
+          - recente
+          - historica_completa
+        default: recente
+        required: true
+      desde:
+        description: "Ano inicial para a carga histórica"
+        type: string
+        default: "2010"
+        required: true
+      ate:
+        description: "Ano final para a carga histórica"
+        type: string
+        default: "2026"
+        required: true
 
 permissions:
   contents: read
@@ -16,7 +35,7 @@ concurrency:
 jobs:
   votacoes:
     name: Atualizar votações recentes
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 * * * *'
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.carga == 'recente')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -49,7 +68,7 @@ jobs:
 
   parlamentares:
     name: Atualizar parlamentares
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 6 * * *'
+    if: (github.event_name == 'schedule' && github.event.schedule == '17 6 * * *') || (github.event_name == 'workflow_dispatch' && inputs.carga == 'recente')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -79,3 +98,88 @@ jobs:
 
       - name: Atualizar parlamentares
         run: python manage.py sync_parlamentares
+
+  historico:
+    name: Importar dados históricos completos
+    if: github.event_name == 'workflow_dispatch' && inputs.carga == 'historica_completa'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost
+      DESDE: ${{ inputs.desde }}
+      ATE: ${{ inputs.ate }}
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Validar conexão e período
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Configure o secret DATABASE_URL com a URL externa do PostgreSQL."
+            exit 1
+          fi
+          python - <<'PY'
+          import os
+          from datetime import date
+
+          start = int(os.environ["DESDE"])
+          end = int(os.environ["ATE"])
+          if start < 2010 or end > date.today().year or start > end:
+              raise SystemExit("O período deve estar entre 2010 e o ano atual, com desde <= ate.")
+          PY
+
+      - name: Importar deputados, projetos e votações por ano
+        run: |
+          python manage.py shell <<'PY'
+          import os
+
+          from services.camara import (
+              CamaraAPI,
+              source,
+              sync_deputies,
+              sync_deputies_for_year,
+              sync_expenses,
+              sync_projects,
+              sync_votings,
+          )
+          from django.utils import timezone
+
+          start = int(os.environ["DESDE"])
+          end = int(os.environ["ATE"])
+          api = CamaraAPI()
+          data_source = source()
+
+          print("Sincronizando cadastro atual de parlamentares...")
+          print(f"Parlamentares atuais: {sync_deputies(api, data_source, end, end)}")
+
+          for year in range(start, end + 1):
+              print(f"Sincronizando mandatos históricos de {year}...")
+              print(f"Mandatos importados: {sync_deputies_for_year(year, api)}")
+
+          for year in range(start, end + 1):
+              print(f"Importando todos os projetos de {year}...")
+              print(f"Projetos importados: {sync_projects(api, data_source, year, year)}")
+
+          for year in range(start, end + 1):
+              print(f"Importando votações e votos individuais de {year}...")
+              print(f"Votações importadas: {sync_votings(api, data_source, year, year)}")
+
+          for year in range(start, end + 1):
+              print(f"Importando despesas parlamentares de {year}...")
+              print(f"Despesas importadas: {sync_expenses(api, data_source, year, year)}")
+
+          data_source.last_parliamentarians_synced_at = timezone.now()
+          data_source.save(update_fields=["last_parliamentarians_synced_at"])
+          PY
