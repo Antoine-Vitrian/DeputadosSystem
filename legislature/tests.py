@@ -133,6 +133,8 @@ class PublicPagesTests(TestCase):
         self.assertEqual(response.json()["votes"][Vote.Choice.YES], 1)
 
     def test_voting_list_shows_only_the_latest_ten_by_default(self):
+        self.voting.voted_at = timezone.now() - timedelta(days=1)
+        self.voting.save(update_fields=["voted_at"])
         Project.objects.create(
             external_id="11",
             code="PL 11/2026",
@@ -140,37 +142,35 @@ class PublicPagesTests(TestCase):
             level=LegislativeLevel.FEDERAL,
             source=self.source,
         )
+        for index in range(12):
+            Voting.objects.create(
+                external_id=f"recent-{index}",
+                title=f"Votação recente {index} · Sim: 10 Não: 2",
+                result="Sim: 10 Não: 2",
+                voted_at=timezone.now() - timedelta(minutes=index + 1),
+                level=LegislativeLevel.FEDERAL,
+                source=self.source,
+            )
         response = self.client.get("/votacoes/")
         self.assertContains(response, "Últimas 10 votações nominais")
         self.assertContains(response, "Votações")
-        self.assertContains(response, self.project.title)
+        self.assertContains(response, "Votação recente 0")
+        self.assertContains(response, "Votação recente 9")
+        self.assertNotContains(response, "Votação recente 10")
         self.assertNotContains(response, "Projeto sem votação nominal")
         self.assertNotContains(response, "Todos os partidos")
         self.assertEqual(self.client.get("/projetos/").status_code, 302)
 
-    def test_news_refreshes_hourly_and_recent_votings_load_only_on_voting_page(self):
-        self.source.last_synced_at = timezone.now() - timedelta(hours=2)
-        self.source.last_parliamentarians_synced_at = self.source.last_synced_at
-        self.source.last_votings_synced_at = self.source.last_synced_at
-        self.source.save(update_fields=["last_synced_at"])
-        self.source.save(update_fields=["last_parliamentarians_synced_at", "last_votings_synced_at"])
-        self.news_source.last_synced_at = timezone.now() - timedelta(hours=2)
-        self.news_source.save(update_fields=["last_synced_at"])
+    def test_parliamentarian_and_voting_lists_do_not_call_camara_during_request(self):
         with (
-            mock.patch("legislature.views.sync_deputies") as refresh_deputies,
-            mock.patch("legislature.views.sync_recent_legislative_data") as refresh_votings,
-            mock.patch("legislature.views.news_refresh_due", return_value=True) as news_refresh_due,
-            mock.patch("legislature.views.sync_daily_news") as refresh_news,
+            mock.patch("services.camara.sync_deputies") as refresh_deputies,
+            mock.patch("services.camara.sync_recent_legislative_data") as refresh_votings,
         ):
-            for path in ("/", "/parlamentares/", "/dashboard/"):
-                with self.subTest(path=path):
-                    self.assertEqual(self.client.get(path).status_code, 200)
+            self.assertEqual(self.client.get("/parlamentares/").status_code, 200)
             self.assertEqual(self.client.get("/votacoes/").status_code, 200)
 
-        refresh_deputies.assert_called_once()
-        refresh_votings.assert_called_once_with()
-        news_refresh_due.assert_called_once_with()
-        refresh_news.assert_called_once_with(timezone.localdate() - timedelta(days=1))
+        refresh_deputies.assert_not_called()
+        refresh_votings.assert_not_called()
 
     def test_home_keeps_saved_news_when_hourly_refresh_fails(self):
         with (
@@ -203,6 +203,37 @@ class PublicPagesTests(TestCase):
         with mock.patch("legislature.views.import_nominal_votings_range", return_value=0) as fetch:
             self.client.get("/votacoes/?inicio=2009-01-01&fim=2009-12-31")
         fetch.assert_called_once_with(date(2010, 1, 1), date(2010, 1, 1))
+
+    def test_recent_voting_sync_imports_summaries_without_loading_details_or_votes(self):
+        from services.camara import sync_recent_legislative_data
+
+        api = mock.Mock()
+        api.get.return_value = {
+            "dados": [
+                {
+                    "id": f"recent-{index}",
+                    "descricao": f"Sim: 10 Não: 2 votação {index}",
+                    "dataHoraRegistro": timezone.now().isoformat(),
+                    "uri": f"https://dadosabertos.camara.leg.br/votacoes/recent-{index}",
+                }
+                for index in range(10)
+            ],
+            "links": [],
+        }
+        with (
+            mock.patch("services.camara.CamaraAPI", return_value=api),
+            mock.patch("services.camara.hydrate_voting") as hydrate,
+            mock.patch("services.camara.sync_deputies") as sync_deputies,
+        ):
+            totals = sync_recent_legislative_data()
+
+        self.assertEqual(totals["votings"], 10)
+        self.assertEqual(Voting.objects.filter(external_id__startswith="recent-").count(), 10)
+        self.assertEqual(Vote.objects.filter(voting__external_id__startswith="recent-").count(), 0)
+        self.source.refresh_from_db()
+        self.assertIsNotNone(self.source.last_votings_synced_at)
+        hydrate.assert_not_called()
+        sync_deputies.assert_not_called()
 
     def test_party_and_state_filters_apply_to_voting_detail(self):
         response = self.client.get(f"/votacoes/{self.voting.pk}/?party=PTX&state=SP")

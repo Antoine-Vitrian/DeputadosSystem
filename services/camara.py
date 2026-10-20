@@ -294,10 +294,9 @@ def sync_votings(api, data_source, start_year, end_year, max_pages=None):
     return total
 
 
-def sync_recent_legislative_data(days=120, page_count=5, nominal_target=12):
+def sync_recent_legislative_data(days=120, page_count=5, nominal_target=10):
     api = CamaraAPI()
     data_source = source()
-    sync_deputies(api, data_source, date.today().year, date.today().year)
     start = timezone.localdate() - timedelta(days=days)
     nominal_found = 0
     scanned = 0
@@ -319,13 +318,14 @@ def sync_recent_legislative_data(days=120, page_count=5, nominal_target=12):
         for item in items:
             scanned += 1
             description = item.get("descricao", "")
-            if not re.search(r"\bSim:\s*\d+.*\bN(?:ã|a)o:\s*\d+", description, re.IGNORECASE):
+            if not _is_nominal_description(description):
                 continue
-            voted_at = parse_datetime(item.get("dataHoraRegistro")) or parse_datetime(f"{item['data']}T00:00:00")
-            voting, _ = Voting.objects.update_or_create(
+            voted_at = parse_datetime(item.get("dataHoraRegistro")) or parse_datetime(f"{item.get('data', '')}T00:00:00")
+            Voting.objects.update_or_create(
                 external_id=str(item["id"]),
                 defaults={
                     "title": description[:300],
+                    "description": description,
                     "voted_at": timezone.make_aware(voted_at) if voted_at and timezone.is_naive(voted_at) else voted_at,
                     "result": description[:120],
                     "level": LegislativeLevel.FEDERAL,
@@ -333,9 +333,7 @@ def sync_recent_legislative_data(days=120, page_count=5, nominal_target=12):
                     "official_url": item.get("uri", ""),
                 },
             )
-            hydrate_voting(voting, api)
-            if voting.project_id and voting.votes.exists():
-                nominal_found += 1
+            nominal_found += 1
             if nominal_found >= nominal_target:
                 break
         if nominal_found >= nominal_target:
@@ -344,8 +342,6 @@ def sync_recent_legislative_data(days=120, page_count=5, nominal_target=12):
     data_source.last_votings_synced_at = data_source.last_synced_at
     data_source.save(update_fields=["last_synced_at", "last_votings_synced_at"])
     return {
-        "deputies": Parliamentarian.objects.filter(level=LegislativeLevel.FEDERAL, is_active=True, is_mock=False).count(),
-        "projects": Project.objects.filter(votings__votes__isnull=False, is_mock=False).distinct().count(),
         "votings": nominal_found,
         "scanned": scanned,
     }

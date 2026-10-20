@@ -113,7 +113,14 @@ docker compose exec web python manage.py sync_camara
 docker compose exec web python manage.py sync_noticias
 ```
 
-Na página inicial, o feed de notícias é atualizado no Poder360 quando já passou uma hora desde a última sincronização; se a fonte estiver indisponível, as notícias salvas continuam sendo exibidas. A lista de parlamentares atualiza os dados atuais ao ser aberta, no máximo uma vez por hora. A sincronização recente de votações só acontece ao abrir a página de votações, também no máximo uma vez por hora. Dados históricos de parlamentares são consultados quando o período é solicitado. Os comandos acima também podem ser agendados para atualizar os dados sem depender de uma visita à página.
+Na página inicial, o feed de notícias é atualizado no Poder360 quando já passou uma hora desde a última sincronização; se a fonte estiver indisponível, as notícias salvas continuam sendo exibidas. As páginas de parlamentares e votações usam os dados salvos no PostgreSQL e não esperam pela Câmara para abrir. A página de votação carrega votos individuais e detalhes somente quando uma votação é aberta.
+
+```powershell
+docker compose exec web python manage.py sync_parlamentares
+docker compose exec web python manage.py sync_camara_diario
+```
+
+O workflow `Atualizar dados da Câmara` no GitHub Actions executa `sync_camara_diario` a cada hora e `sync_parlamentares` diariamente, sem precisar contratar Cron Jobs do Render. Para habilitá-lo, adicione `DATABASE_URL` em **GitHub → Settings → Secrets and variables → Actions → New repository secret**. Use uma URL externa do PostgreSQL acessível pelo GitHub Actions, com SSL habilitado quando exigido pelo provedor. Workflows agendados rodam a partir da branch padrão do repositório; faça merge para `main` para ativar o agendamento. Também é possível iniciá-lo manualmente em **Actions → Atualizar dados da Câmara → Run workflow**. Rode-o manualmente uma vez para preencher os dados iniciais.
 
 Para parar os serviços sem apagar o banco:
 
@@ -161,14 +168,14 @@ Para importar a página mais recente de projetos e a lista atual de deputados:
 py -3.13 manage.py sync_camara
 ```
 
-Para atualizar os dados legislativos diariamente e as notícias a cada hora:
+Para atualizar os dados fora das requisições das páginas:
 
 ```powershell
+py -3.13 manage.py sync_parlamentares
 py -3.13 manage.py sync_camara_diario
-py -3.13 manage.py sync_noticias
 ```
 
-Agende `sync_camara_diario` uma vez por dia e `sync_noticias` a cada hora no Agendador de Tarefas do Windows. A página inicial atualiza as notícias a cada hora e as páginas de início e votações atualizam os dados recentes da Câmara automaticamente quando a última sincronização tem mais de uma hora.
+O workflow `Atualizar dados da Câmara` no GitHub Actions executa `sync_parlamentares` diariamente e `sync_camara_diario` a cada hora (UTC). Configure o secret `DATABASE_URL` no repositório GitHub e use a URL externa do PostgreSQL. Workflows agendados só rodam na branch padrão; faça merge dessas alterações para `main` para habilitar as execuções periódicas. A sincronização atualiza o banco em segundo plano; as páginas mostram os dados salvos sem esperar pela API da Câmara. A lista exibe as dez votações nominais mais recentes; votos individuais e detalhes completos são carregados ao abrir uma votação. Para preencher os dados imediatamente, execute os comandos manualmente uma vez pelo Render Shell ou inicie o workflow em **Actions → Atualizar dados da Câmara → Run workflow**.
 
 Para importar mais páginas ou despesas explicitamente:
 

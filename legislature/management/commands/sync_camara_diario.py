@@ -5,7 +5,7 @@ from services.camara import CamaraAPI, source, sync_expenses, sync_recent_legisl
 
 
 class Command(BaseCommand):
-    help = "Atualiza listas recentes; detalhes, votos e despesas são carregados sob demanda."
+    help = "Atualiza as dez votações nominais mais recentes; detalhes e votos são carregados sob demanda."
 
     def add_arguments(self, parser):
         parser.add_argument("--desde", type=int, default=date.today().year)
@@ -17,6 +17,6 @@ class Command(BaseCommand):
         try:
             totals = sync_recent_legislative_data(page_count=options["max_pages"])
             expenses = sync_expenses(CamaraAPI(), source(), options["desde"], options["ate"]) if options["com_despesas"] else 0
-            self.stdout.write(self.style.SUCCESS(f"Atualização concluída: {totals['deputies']} deputados ativos, {totals['projects']} projetos com voto nominal, {totals['votings']} votações nominais encontradas após examinar {totals['scanned']} registros e {expenses} despesas."))
+            self.stdout.write(self.style.SUCCESS(f"Atualização concluída: {totals['votings']} votações nominais listadas após examinar {totals['scanned']} registros e {expenses} despesas."))
         except requests.RequestException as error:
             raise CommandError(f"Fonte oficial indisponível: {error}") from error
