@@ -113,7 +113,14 @@ docker compose exec web python manage.py sync_camara
 docker compose exec web python manage.py sync_noticias
 ```
 
-Na página inicial, o feed de notícias é atualizado no Poder360 quando já passou uma hora desde a última sincronização; se a fonte estiver indisponível, as notícias salvas continuam sendo exibidas. A lista de parlamentares atualiza os dados atuais ao ser aberta, no máximo uma vez por hora. A sincronização recente de votações só acontece ao abrir a página de votações, também no máximo uma vez por hora. Dados históricos de parlamentares são consultados quando o período é solicitado. Os comandos acima também podem ser agendados para atualizar os dados sem depender de uma visita à página.
+Na página inicial, o feed de notícias é atualizado no Poder360 quando já passou uma hora desde a última sincronização; se a fonte estiver indisponível, as notícias salvas continuam sendo exibidas. As páginas de parlamentares e votações usam os dados salvos no PostgreSQL e não esperam pela Câmara para abrir. Atualize esses dados com os comandos abaixo; a página de votação carrega votos individuais e detalhes somente quando uma votação é aberta.
+
+```powershell
+docker compose exec web python manage.py sync_parlamentares
+docker compose exec web python manage.py sync_camara_diario
+```
+
+No Render, configure Cron Jobs para executar `sync_parlamentares` diariamente e `sync_camara_diario` a cada hora.
 
 Para parar os serviços sem apagar o banco:
 
@@ -161,14 +168,14 @@ Para importar a página mais recente de projetos e a lista atual de deputados:
 py -3.13 manage.py sync_camara
 ```
 
-Para atualizar os dados legislativos diariamente e as notícias a cada hora:
+Para atualizar os dados fora das requisições das páginas:
 
 ```powershell
+py -3.13 manage.py sync_parlamentares
 py -3.13 manage.py sync_camara_diario
-py -3.13 manage.py sync_noticias
 ```
 
-Agende `sync_camara_diario` uma vez por dia e `sync_noticias` a cada hora no Agendador de Tarefas do Windows. A página inicial atualiza as notícias a cada hora e as páginas de início e votações atualizam os dados recentes da Câmara automaticamente quando a última sincronização tem mais de uma hora.
+Agende `sync_parlamentares` uma vez por dia e `sync_camara_diario` a cada hora. No Render, crie dois serviços **Cron Job** usando o mesmo repositório e banco PostgreSQL do serviço web: um com o comando `python manage.py sync_parlamentares` e agenda diária; outro com `python manage.py sync_camara_diario` e agenda `0 * * * *` (uma vez por hora, em UTC). Esses jobs atualizam o banco em segundo plano: as listas de parlamentares e votações respondem usando os dados salvos, sem esperar pela API da Câmara. A lista mostra as dez votações nominais mais recentes; os votos individuais e detalhes completos só são buscados ao abrir uma votação. Se os cron jobs ainda não tiverem executado, rode os dois comandos uma vez para preencher os dados iniciais.
 
 Para importar mais páginas ou despesas explicitamente:
 

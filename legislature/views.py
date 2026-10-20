@@ -10,28 +10,12 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from services.camara import CamaraAPI, PROPOSITION_KINDS, ensure_voting_projects, fetch_author_propositions, hydrate_project, hydrate_voting, import_nominal_votings_range, refresh_parliamentarian_identity, source, sync_deputies, sync_deputies_for_year, sync_recent_legislative_data
+from services.camara import PROPOSITION_KINDS, fetch_author_propositions, hydrate_project, hydrate_voting, import_nominal_votings_range, refresh_parliamentarian_identity, sync_deputies_for_year
 from services.teor import ensure_text_summary
 from services.news import news_refresh_due, sync_daily_news
 from services.ranking import fetch_parliamentarian_score
 
 from .models import HistoricalDeputySync, LegislativeLevel, Mandate, NewsArticle, Parliamentarian, Project, Theme, Vote, Voting
-
-
-def _sync_is_stale(last_synced_at):
-    return not last_synced_at or last_synced_at < timezone.now() - timedelta(hours=1)
-
-
-def _ensure_recent_parliamentarians():
-    data_source = source()
-    if _sync_is_stale(data_source.last_parliamentarians_synced_at):
-        sync_deputies(CamaraAPI(), data_source, timezone.localdate().year, timezone.localdate().year)
-
-
-def _ensure_recent_votings():
-    data_source = source()
-    if _sync_is_stale(data_source.last_votings_synced_at):
-        sync_recent_legislative_data()
 
 
 def home(request):
@@ -165,17 +149,11 @@ def parliamentarian_list(request):
     current_year = timezone.localdate().year
     if selected_year < 2010 or selected_year > current_year:
         selected_year = 0
-    if not selected_year:
-        try:
-            _ensure_recent_parliamentarians()
-        except requests.RequestException as error:
-            sync_error = str(error)
     queryset = (
         Parliamentarian.objects.filter(level=LegislativeLevel.FEDERAL, is_mock=False)
         .exclude(name="")
         .exclude(name__isnull=True)
         .select_related("party")
-        .distinct()
     )
     if selected_year:
         period_start = date(selected_year, 1, 1)
@@ -193,7 +171,7 @@ def parliamentarian_list(request):
             mandates__start_date__lte=period_end,
         ).filter(
             Q(mandates__end_date__isnull=True) | Q(mandates__end_date__gte=period_start)
-        )
+        ).distinct()
     else:
         queryset = queryset.filter(is_active=True)
     selected_name = request.GET.get("q", "").strip()
@@ -407,14 +385,27 @@ def _search_date_range(request):
 
 def voting_list(request):
     sync_error = ""
-    try:
-        _ensure_recent_votings()
-    except requests.RequestException as error:
-        sync_error = f"Dados legislativos temporariamente indisponíveis: {error}"
     query = request.GET.get("q", "").strip()
     start_date, end_date = _search_date_range(request)
     searching = bool(query or start_date or end_date)
-    votings = Voting.objects.filter(level=LegislativeLevel.FEDERAL).select_related("project")
+    nominal_votings = (
+        Q(votes__isnull=False)
+        | (
+            (Q(title__icontains="Sim:") | Q(result__icontains="Sim:"))
+            & (
+                Q(title__icontains="Não:")
+                | Q(title__icontains="Nao:")
+                | Q(result__icontains="Não:")
+                | Q(result__icontains="Nao:")
+            )
+        )
+    )
+    votings = (
+        Voting.objects.filter(level=LegislativeLevel.FEDERAL)
+        .filter(nominal_votings)
+        .select_related("project")
+        .distinct()
+    )
     if searching:
         range_start = start_date or EARLIEST_VOTING_DATE
         range_end = end_date or timezone.localdate()
@@ -433,12 +424,8 @@ def voting_list(request):
             )
         votings = votings.distinct().order_by("-voted_at")
         page_obj = Paginator(votings, 10).get_page(request.GET.get("page"))
-        try:
-            ensure_voting_projects(page_obj.object_list)
-        except requests.RequestException as error:
-            sync_error = sync_error or str(error)
     else:
-        votings = votings.filter(votes__isnull=False).distinct().order_by("-voted_at")[:10]
+        votings = votings.order_by("-voted_at")[:10]
         page_obj = None
     return render(request, "voting_list.html", {
         "page_obj": page_obj,
