@@ -8,23 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       carga:
-        description: "Atualização recente, incremental ou carga histórica completa"
+        description: "Atualização recente, incremental ou carga inicial dos últimos 6 meses"
         type: choice
         options:
           - recente
           - incremental
-          - historica_completa
+          - ultimos_6_meses
         default: recente
-        required: true
-      desde:
-        description: "Ano inicial para a carga histórica"
-        type: string
-        default: "2010"
-        required: true
-      ate:
-        description: "Ano final para a carga histórica"
-        type: string
-        default: "2026"
         required: true
 
 permissions:
@@ -37,7 +27,7 @@ concurrency:
 jobs:
   migrate:
     name: Aplicar migrações para sincronização
-    if: (github.event_name == 'schedule' && github.event.schedule == '37 6 * * *') || (github.event_name == 'workflow_dispatch' && (inputs.carga == 'incremental' || inputs.carga == 'historica_completa'))
+    if: (github.event_name == 'schedule' && github.event.schedule == '37 6 * * *') || (github.event_name == 'workflow_dispatch' && (inputs.carga == 'incremental' || inputs.carga == 'ultimos_6_meses'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -169,8 +159,8 @@ jobs:
         run: python manage.py sync_camara_incremental
 
   historico:
-    name: Importar dados históricos completos
-    if: github.event_name == 'workflow_dispatch' && inputs.carga == 'historica_completa'
+    name: Importar dados dos últimos 6 meses
+    if: github.event_name == 'workflow_dispatch' && inputs.carga == 'ultimos_6_meses'
     needs: migrate
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -178,8 +168,6 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DJANGO_DEBUG: "0"
       DJANGO_ALLOWED_HOSTS: localhost
-      DESDE: ${{ inputs.desde }}
-      ATE: ${{ inputs.ate }}
 
     steps:
       - name: Baixar o código
@@ -194,26 +182,16 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
-      - name: Validar conexão e período
+      - name: Validar conexão
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "::error::Configure o secret DATABASE_URL com a URL externa do PostgreSQL."
             exit 1
           fi
-          python - <<'PY'
-          import os
-          from datetime import date
-
-          start = int(os.environ["DESDE"])
-          end = int(os.environ["ATE"])
-          if start != 2010 or end > date.today().year or start > end:
-              raise SystemExit("Para habilitar a sincronização incremental, desde deve ser 2010 e ate não pode ultrapassar o ano atual.")
-          PY
-
-      - name: Importar deputados, projetos e votações por ano
+      - name: Importar dados dos últimos 6 meses
         run: |
           python manage.py shell <<'PY'
-          import os
+          from calendar import monthrange
           from datetime import date
 
           from services.camara import (
@@ -221,53 +199,70 @@ jobs:
               source,
               sync_deputies,
               sync_deputies_for_year,
-              sync_expenses,
-              sync_projects,
-              sync_votings,
+              sync_expenses_month,
+              sync_new_projects,
+              sync_new_votings,
           )
           from django.utils import timezone
 
-          start = int(os.environ["DESDE"])
-          end = int(os.environ["ATE"])
+          year = timezone.localdate().year
+          today = timezone.localdate()
+          start_month_index = today.year * 12 + today.month - 1 - 6
+          start_year = start_month_index // 12
+          start_month = start_month_index % 12 + 1
+          start_day = min(today.day, monthrange(start_year, start_month)[1])
+          start_date = date(start_year, start_month, start_day)
           api = CamaraAPI()
           data_source = source()
 
-          print("Sincronizando cadastro atual de parlamentares...")
-          print(f"Parlamentares atuais: {sync_deputies(api, data_source, end, end)}")
+          def report(label, count):
+              print(f"{label}: {count}")
+              if count == 0:
+                  print(f"::warning::Dado não encontrado: {label} para {year}.")
 
-          for year in range(start, end + 1):
-              print(f"Sincronizando mandatos históricos de {year}...")
-              print(f"Mandatos importados: {sync_deputies_for_year(year, api)}")
+          print(f"Sincronizando cadastro atual de parlamentares ({year})...")
+          report("Parlamentares atuais", sync_deputies(api, data_source, year, year))
 
-          for year in range(start, end + 1):
-              print(f"Importando todos os projetos de {year}...")
-              print(f"Projetos importados: {sync_projects(api, data_source, year, year)}")
-          data_source.projects_synced_through = (
-              date(end, 12, 31) if end < timezone.localdate().year else timezone.localdate()
+          print(f"Sincronizando mandatos de {year}...")
+          report("Mandatos importados", sync_deputies_for_year(year, api))
+
+          print(f"Importando projetos desde {start_date}...")
+          report(
+              "Projetos importados",
+              sync_new_projects(api, data_source, start_date, today),
           )
+          data_source.projects_synced_through = today
           data_source.save(update_fields=["projects_synced_through"])
 
-          for year in range(start, end + 1):
-              print(f"Importando votações e votos individuais de {year}...")
-              print(f"Votações importadas: {sync_votings(api, data_source, year, year)}")
-          data_source.votings_synced_through = (
-              date(end, 12, 31) if end < timezone.localdate().year else timezone.localdate()
+          print(f"Importando votações nominais desde {start_date}...")
+          report(
+              "Votações importadas",
+              sync_new_votings(api, data_source, start_date, today),
           )
+          data_source.votings_synced_through = today
           data_source.save(update_fields=["votings_synced_through"])
 
-          for year in range(start, end + 1):
-              print(f"Importando despesas parlamentares de {year}...")
-              print(f"Despesas importadas: {sync_expenses(api, data_source, year, year)}")
-          if end < timezone.localdate().year:
-              expenses_through = date(end, 12, 1)
-          elif timezone.localdate().month == 1:
-              expenses_through = date(timezone.localdate().year - 1, 12, 1)
-          else:
-              expenses_through = date(
-                  timezone.localdate().year,
-                  timezone.localdate().month - 1,
-                  1,
+          expenses_through = date(
+              today.year - 1 if today.month == 1 else today.year,
+              12 if today.month == 1 else today.month - 1,
+              1,
+          )
+          expense_month_index = start_year * 12 + start_month - 1
+          last_expense_month_index = (
+              expenses_through.year * 12 + expenses_through.month - 1
+          )
+          expenses_imported = 0
+          while expense_month_index <= last_expense_month_index:
+              expense_year = expense_month_index // 12
+              expense_month = expense_month_index % 12 + 1
+              expenses_imported += sync_expenses_month(
+                  api,
+                  data_source,
+                  expense_year,
+                  expense_month,
               )
+              expense_month_index += 1
+          report("Despesas importadas", expenses_imported)
           data_source.expenses_synced_through = expenses_through
           data_source.save(update_fields=["expenses_synced_through"])
 
