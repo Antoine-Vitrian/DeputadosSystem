@@ -262,6 +262,70 @@ def sync_projects(api, data_source, start_year, end_year, max_pages=None):
     return total
 
 
+def sync_new_projects(api, data_source, start_date, end_date):
+    params = {
+        "dataApresentacaoInicio": start_date.isoformat(),
+        "dataApresentacaoFim": end_date.isoformat(),
+        "ordem": "DESC",
+        "ordenarPor": "id",
+    }
+    total = 0
+    for item in api.all("proposicoes", params):
+        external_id = str(item["id"])
+        if Project.objects.filter(external_id=external_id).exists():
+            continue
+
+        detail = api.get(f"proposicoes/{external_id}").get("dados", {})
+        author = None
+        authors = api.get(f"proposicoes/{external_id}/autores").get("dados", [])
+        for author_data in authors:
+            uri = author_data.get("uri", "")
+            if "/deputados/" not in uri:
+                continue
+            deputy_id = uri.rstrip("/").rsplit("/", 1)[-1]
+            deputy_data = api.get(f"deputados/{deputy_id}").get("dados", {})
+            if deputy_data:
+                author = upsert_parliamentarian(deputy_data, data_source)
+            break
+        upsert_project({**item, **detail}, data_source, author)
+        total += 1
+    return total
+
+
+def sync_new_votings(api, data_source, start_date, end_date):
+    total = 0
+    for period_start, period_end in _iter_months(start_date, end_date):
+        params = {
+            "dataInicio": period_start.isoformat(),
+            "dataFim": period_end.isoformat(),
+            "ordem": "DESC",
+            "ordenarPor": "dataHoraRegistro",
+        }
+        for item in api.all("votacoes", params):
+            description = item.get("descricao", "")
+            if not _is_nominal_description(description):
+                continue
+            voted_at = parse_datetime(item.get("dataHoraRegistro")) or parse_datetime(
+                f"{item.get('data', '')}T00:00:00"
+            )
+            voting, _ = Voting.objects.update_or_create(
+                external_id=str(item["id"]),
+                defaults={
+                    "title": description[:300],
+                    "description": description,
+                    "voted_at": timezone.make_aware(voted_at) if voted_at and timezone.is_naive(voted_at) else voted_at,
+                    "result": description[:120],
+                    "level": LegislativeLevel.FEDERAL,
+                    "source": data_source,
+                    "official_url": item.get("uri", ""),
+                },
+            )
+            if not voting.project_id or not voting.votes.exists():
+                hydrate_voting(voting, api)
+            total += 1
+    return total
+
+
 def sync_votings(api, data_source, start_year, end_year, max_pages=None):
     total = 0
     for year in range(start_year, end_year + 1):
@@ -707,3 +771,89 @@ def sync_expenses(api, data_source, start_year, end_year):
                 Expense.objects.update_or_create(external_id=external_id, defaults={"parliamentarian": deputy, "year": year, "month": item.get("mes"), "category": item.get("tipoDespesa", ""), "supplier": item.get("nomeFornecedor", ""), "document_number": str(item.get("numDocumento", "")), "value": value, "document_url": item.get("urlDocumento", ""), "source": data_source})
                 total += 1
     return total
+
+
+def sync_expenses_month(api, data_source, year, month):
+    total = 0
+    deputies = Parliamentarian.objects.filter(level=LegislativeLevel.FEDERAL, is_mock=False)
+    for deputy in deputies:
+        for item in api.all(
+            f"deputados/{deputy.external_id}/despesas",
+            {"ano": year, "mes": month},
+        ):
+            value = Decimal(str(item.get("valorLiquido", item.get("valorDocumento", 0)) or 0))
+            document_id = item.get("codDocumento") or item.get("numDocumento") or f"{month}-{total}"
+            external_id = f"{deputy.external_id}-{document_id}-{year}"
+            Expense.objects.update_or_create(
+                external_id=external_id,
+                defaults={
+                    "parliamentarian": deputy,
+                    "year": year,
+                    "month": item.get("mes") or month,
+                    "category": item.get("tipoDespesa", ""),
+                    "supplier": item.get("nomeFornecedor", ""),
+                    "document_number": str(item.get("numDocumento", "")),
+                    "value": value,
+                    "document_url": item.get("urlDocumento", ""),
+                    "source": data_source,
+                },
+            )
+            total += 1
+    return total
+
+
+def sync_camara_incremental(api=None):
+    data_source = source()
+    cursors = (
+        data_source.projects_synced_through,
+        data_source.votings_synced_through,
+        data_source.expenses_synced_through,
+    )
+    if any(cursor is None for cursor in cursors):
+        raise ValueError(
+            "A carga histórica inicial ainda não foi concluída. "
+            "Execute primeiro a opção historica_completa no workflow."
+        )
+
+    api = api or CamaraAPI()
+    today = timezone.localdate()
+    sync_deputies(api, data_source, today.year, today.year)
+    sync_deputies_for_year(today.year, api)
+
+    overlap_start = today - timedelta(days=7)
+    project_start = max(date(2010, 1, 1), min(data_source.projects_synced_through, overlap_start))
+    projects = sync_new_projects(api, data_source, project_start, today)
+    data_source.projects_synced_through = today
+    data_source.save(update_fields=["projects_synced_through"])
+
+    voting_start = max(date(2010, 1, 1), min(data_source.votings_synced_through, overlap_start))
+    votings = sync_new_votings(api, data_source, voting_start, today)
+    data_source.votings_synced_through = today
+    data_source.save(update_fields=["votings_synced_through"])
+
+    last_closed_month = (
+        date(today.year - 1, 12, 1)
+        if today.month == 1
+        else date(today.year, today.month - 1, 1)
+    )
+    expenses = 0
+    expense_month = data_source.expenses_synced_through
+    while (expense_month.year, expense_month.month) < (
+        last_closed_month.year,
+        last_closed_month.month,
+    ):
+        next_month = (
+            date(expense_month.year + 1, 1, 1)
+            if expense_month.month == 12
+            else date(expense_month.year, expense_month.month + 1, 1)
+        )
+        expenses += sync_expenses_month(api, data_source, next_month.year, next_month.month)
+        expense_month = next_month
+        data_source.expenses_synced_through = expense_month
+        data_source.save(update_fields=["expenses_synced_through"])
+
+    return {
+        "projects": projects,
+        "votings": votings,
+        "expenses": expenses,
+    }

@@ -688,6 +688,97 @@ class PublicPagesTests(TestCase):
         home = self.client.get("/")
         self.assertContains(home, 'href="/entenda/"')
 
+
+class CamaraIncrementalSyncTests(TestCase):
+    def setUp(self):
+        self.source = DataSource.objects.create(
+            name="Câmara dos Deputados - Dados Abertos",
+            url="https://dadosabertos.camara.leg.br/",
+            identifier="camara-dados-abertos",
+        )
+
+    def test_incremental_sync_requires_completed_historical_load(self):
+        from services.camara import sync_camara_incremental
+
+        with mock.patch("services.camara.source", return_value=self.source):
+            with self.assertRaisesMessage(ValueError, "carga histórica inicial"):
+                sync_camara_incremental(api=mock.Mock())
+
+    def test_incremental_sync_uses_overlap_and_resumes_closed_expense_months(self):
+        from services.camara import sync_camara_incremental
+
+        today = timezone.localdate()
+        current_month_index = today.year * 12 + today.month - 1
+        cursor_index = current_month_index - 2
+        expense_cursor = date(cursor_index // 12, cursor_index % 12 + 1, 1)
+        expected_expense_index = cursor_index + 1
+        expected_expense_month = (
+            expected_expense_index // 12,
+            expected_expense_index % 12 + 1,
+        )
+        recent_cursor = today - timedelta(days=2)
+        self.source.projects_synced_through = recent_cursor
+        self.source.votings_synced_through = recent_cursor
+        self.source.expenses_synced_through = expense_cursor
+        self.source.save()
+
+        api = mock.Mock()
+        with (
+            mock.patch("services.camara.source", return_value=self.source),
+            mock.patch("services.camara.sync_deputies") as sync_deputies,
+            mock.patch("services.camara.sync_deputies_for_year") as sync_mandates,
+            mock.patch("services.camara.sync_new_projects", return_value=4) as sync_projects,
+            mock.patch("services.camara.sync_new_votings", return_value=2) as sync_votings,
+            mock.patch("services.camara.sync_expenses_month", return_value=3) as sync_expenses,
+        ):
+            totals = sync_camara_incremental(api=api)
+
+        overlap_start = max(date(2010, 1, 1), today - timedelta(days=7))
+        sync_deputies.assert_called_once_with(api, self.source, today.year, today.year)
+        sync_mandates.assert_called_once_with(today.year, api)
+        sync_projects.assert_called_once_with(api, self.source, overlap_start, today)
+        sync_votings.assert_called_once_with(api, self.source, overlap_start, today)
+        sync_expenses.assert_called_once_with(
+            api,
+            self.source,
+            expected_expense_month[0],
+            expected_expense_month[1],
+        )
+        self.assertEqual(totals, {"projects": 4, "votings": 2, "expenses": 3})
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.projects_synced_through, today)
+        self.assertEqual(self.source.votings_synced_through, today)
+        self.assertEqual(self.source.expenses_synced_through, date(*expected_expense_month, 1))
+
+    def test_incremental_sync_advances_only_categories_that_completed(self):
+        from services.camara import sync_camara_incremental
+
+        today = timezone.localdate()
+        old_cursor = today - timedelta(days=12)
+        self.source.projects_synced_through = old_cursor
+        self.source.votings_synced_through = old_cursor
+        self.source.expenses_synced_through = date(today.year - 1, 12, 1)
+        self.source.save()
+
+        with (
+            mock.patch("services.camara.source", return_value=self.source),
+            mock.patch("services.camara.sync_deputies"),
+            mock.patch("services.camara.sync_deputies_for_year"),
+            mock.patch("services.camara.sync_new_projects", return_value=1),
+            mock.patch(
+                "services.camara.sync_new_votings",
+                side_effect=requests.ConnectionError("Câmara indisponível"),
+            ),
+        ):
+            with self.assertRaises(requests.ConnectionError):
+                sync_camara_incremental(api=mock.Mock())
+
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.projects_synced_through, today)
+        self.assertEqual(self.source.votings_synced_through, old_cursor)
+
+
+class PublicPagesAdditionalTests(TestCase):
     def test_site_footer_appears_on_public_pages(self):
         response = self.client.get("/")
         self.assertContains(response, "site-footer")

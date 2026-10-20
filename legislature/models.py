@@ -14,6 +14,9 @@ class DataSource(models.Model):
     last_synced_at = models.DateTimeField(null=True, blank=True)
     last_parliamentarians_synced_at = models.DateTimeField(null=True, blank=True)
     last_votings_synced_at = models.DateTimeField(null=True, blank=True)
+    projects_synced_through = models.DateField(null=True, blank=True)
+    votings_synced_through = models.DateField(null=True, blank=True)
+    expenses_synced_through = models.DateField(null=True, blank=True)
 
     def __str__(self):
         return self.name
