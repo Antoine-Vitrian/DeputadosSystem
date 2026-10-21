@@ -689,6 +689,25 @@ class PublicPagesTests(TestCase):
         self.assertContains(home, 'href="/entenda/"')
 
 
+class CamaraProjectSyncTests(TestCase):
+    def test_project_ementa_longer_than_title_field_is_truncated(self):
+        from services.camara import upsert_project
+
+        data_source = DataSource.objects.create(
+            name="Câmara dos Deputados - Dados Abertos",
+            url="https://dadosabertos.camara.leg.br/",
+            identifier="camara-dados-abertos",
+        )
+        ementa = "a" * 301
+
+        project = upsert_project(
+            {"id": "123", "ementa": ementa},
+            data_source,
+        )
+
+        self.assertEqual(project.title, "a" * 300)
+
+
 class CamaraIncrementalSyncTests(TestCase):
     def setUp(self):
         self.source = DataSource.objects.create(

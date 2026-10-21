@@ -148,7 +148,7 @@ def upsert_project(data, data_source, author=None):
         defaults["code"] = f"{data['siglaTipo']} {data.get('numero', data['id'])}/{data.get('ano', '')}"
         defaults.setdefault("type_description", data["siglaTipo"][:120])
     if data.get("ementa"):
-        defaults["title"] = data["ementa"]
+        defaults["title"] = data["ementa"][:300]
     if data.get("ementaDetalhada"):
         defaults["description"] = data["ementaDetalhada"]
     if data.get("descricaoTipo"):
