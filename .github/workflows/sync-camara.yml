@@ -2,18 +2,18 @@ name: Atualizar dados da Câmara
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 6 * * *"
     - cron: "17 6 * * *"
     - cron: "37 6 * * *"
   workflow_dispatch:
     inputs:
       carga:
-        description: "Atualização recente, incremental ou carga inicial dos últimos 2 meses"
+        description: "Atualização recente, incremental ou carga inicial do último mês fechado"
         type: choice
         options:
           - recente
           - incremental
-          - ultimos_2_meses
+          - ultimo_mes
         default: recente
         required: true
 
@@ -27,7 +27,7 @@ concurrency:
 jobs:
   migrate:
     name: Aplicar migrações para sincronização
-    if: (github.event_name == 'schedule' && github.event.schedule == '37 6 * * *') || (github.event_name == 'workflow_dispatch' && (inputs.carga == 'incremental' || inputs.carga == 'ultimos_2_meses'))
+    if: (github.event_name == 'schedule' && github.event.schedule == '37 6 * * *') || (github.event_name == 'workflow_dispatch' && (inputs.carga == 'incremental' || inputs.carga == 'ultimo_mes'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -59,8 +59,8 @@ jobs:
         run: python manage.py migrate --noinput
 
   votacoes:
-    name: Atualizar votações recentes
-    if: (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.carga == 'recente')
+    name: Atualizar votações recentes (diariamente)
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 6 * * *') || (github.event_name == 'workflow_dispatch' && inputs.carga == 'recente')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -159,8 +159,8 @@ jobs:
         run: python manage.py sync_camara_incremental
 
   historico:
-    name: Importar dados dos últimos 2 meses
-    if: github.event_name == 'workflow_dispatch' && inputs.carga == 'ultimos_2_meses'
+    name: Importar dados do último mês fechado
+    if: github.event_name == 'workflow_dispatch' && inputs.carga == 'ultimo_mes'
     needs: migrate
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -188,10 +188,10 @@ jobs:
             echo "::error::Configure o secret DATABASE_URL com a URL externa do PostgreSQL."
             exit 1
           fi
-      - name: Importar dados dos últimos 2 meses
+      - name: Importar dados do último mês fechado
         run: |
           python manage.py shell <<'PY'
-          from datetime import date
+          from datetime import timedelta
 
           from services.camara import (
               CamaraAPI,
@@ -206,10 +206,10 @@ jobs:
 
           year = timezone.localdate().year
           today = timezone.localdate()
-          start_month_index = today.year * 12 + today.month - 1 - 2
-          start_year = start_month_index // 12
-          start_month = start_month_index % 12 + 1
-          start_date = date(start_year, start_month, 1)
+          end_date = today.replace(day=1) - timedelta(days=1)
+          start_date = end_date.replace(day=1)
+          start_year = start_date.year
+          start_month = start_date.month
           api = CamaraAPI()
           data_source = source()
 
@@ -224,44 +224,30 @@ jobs:
           print(f"Sincronizando mandatos de {year}...")
           report("Mandatos importados", sync_deputies_for_year(year, api))
 
-          print(f"Importando projetos desde {start_date}...")
+          print(f"Importando projetos de {start_date} a {end_date}...")
           report(
               "Projetos importados",
-              sync_new_projects(api, data_source, start_date, today),
+              sync_new_projects(api, data_source, start_date, end_date),
           )
-          data_source.projects_synced_through = today
+          data_source.projects_synced_through = end_date
           data_source.save(update_fields=["projects_synced_through"])
 
-          print(f"Importando votações nominais desde {start_date}...")
+          print(f"Importando votações nominais de {start_date} a {end_date}...")
           report(
               "Votações importadas",
-              sync_new_votings(api, data_source, start_date, today),
+              sync_new_votings(api, data_source, start_date, end_date),
           )
-          data_source.votings_synced_through = today
+          data_source.votings_synced_through = end_date
           data_source.save(update_fields=["votings_synced_through"])
 
-          expenses_through = date(
-              today.year - 1 if today.month == 1 else today.year,
-              12 if today.month == 1 else today.month - 1,
-              1,
+          expenses_imported = sync_expenses_month(
+              api,
+              data_source,
+              start_year,
+              start_month,
           )
-          expense_month_index = start_year * 12 + start_month - 1
-          last_expense_month_index = (
-              expenses_through.year * 12 + expenses_through.month - 1
-          )
-          expenses_imported = 0
-          while expense_month_index <= last_expense_month_index:
-              expense_year = expense_month_index // 12
-              expense_month = expense_month_index % 12 + 1
-              expenses_imported += sync_expenses_month(
-                  api,
-                  data_source,
-                  expense_year,
-                  expense_month,
-              )
-              expense_month_index += 1
           report("Despesas importadas", expenses_imported)
-          data_source.expenses_synced_through = expenses_through
+          data_source.expenses_synced_through = start_date
           data_source.save(update_fields=["expenses_synced_through"])
 
           data_source.last_parliamentarians_synced_at = timezone.now()
