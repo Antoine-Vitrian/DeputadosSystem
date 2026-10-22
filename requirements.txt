@@ -1,4 +1,4 @@
-Django>=5.1,<6.0
+Django>=6.1.2,<7.0
 djangorestframework>=3.18.3,<4.0
 django-filter>=24.3,<26.0
 requests>=2.34.2,<3.0
