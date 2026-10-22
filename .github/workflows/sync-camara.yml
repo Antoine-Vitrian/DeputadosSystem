@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configurar Python
         uses: actions/setup-python@v6
@@ -70,7 +70,7 @@ jobs:
 
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configurar Python
         uses: actions/setup-python@v6
@@ -103,7 +103,7 @@ jobs:
 
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configurar Python
         uses: actions/setup-python@v6
@@ -137,7 +137,7 @@ jobs:
 
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configurar Python
         uses: actions/setup-python@v6
@@ -171,7 +171,7 @@ jobs:
 
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Configurar Python
         uses: actions/setup-python@v6
